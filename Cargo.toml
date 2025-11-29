@@ -14,3 +14,4 @@ md5 = "0.8.0"
 ratatui = "0.29.0"
 rayon = "1.11.0"
 serde = { version = "1.0.228", features = ["derive"] }
+sysinfo = "0.37.2"
