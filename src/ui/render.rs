@@ -16,7 +16,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Block::default().style(Style::default().bg(t.bg)),
         area,
     );
-    
+
+    // If scanning, just show the scanning overlay (full screen)
+    if app.state == AppState::Scanning {
+        render_scanning_overlay(f, app, area);
+        return;
+    }
+
     // Main layout
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -27,13 +33,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
             Constraint::Length(1),  // Footer
         ])
         .split(area);
-    
+
     // Render main components
     header::render_disk_gauge(f, app, chunks[0]);
     header::render_breadcrumbs(f, app, chunks[1]);
     table::render_table(f, app, chunks[2]);
     footer::render_footer(f, app, chunks[3]);
-    
+
     // Render overlays based on state
     match app.state {
         AppState::DeleteConfirm => {
@@ -49,7 +55,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             popups::render_search_popup(f, app);
         }
         AppState::Scanning => {
-            render_scanning_overlay(f, app);
+            // Already handled above
         }
         // Analysis views - rendered as overlays
         AppState::JunkAnalysis => {
@@ -77,12 +83,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
 }
 
-/// Render scanning progress overlay with spinner
-fn render_scanning_overlay(f: &mut Frame, app: &App) {
+/// Render scanning progress overlay with spinner (full screen)
+fn render_scanning_overlay(f: &mut Frame, app: &App, full_area: Rect) {
     let syms = symbols();
-    let area = crate::utils::centered_rect(50, 30, f.area());
-
-    f.render_widget(Clear, area);
+    // Center the content in the full area
+    let area = crate::utils::centered_rect(50, 40, full_area);
 
     // Get spinner frame based on time (using file count as proxy for animation)
     let spinner_frame = if let Some(ref progress) = app.scan_progress {
