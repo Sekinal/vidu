@@ -8,7 +8,7 @@ mod preview;
 mod progress;
 mod scan;
 
-pub use entry::Entry;
+pub use entry::{Entry, FileCategory, JunkType};
 pub use preview::{
     directory_preview, file_info_preview, read_file_preview, read_file_preview_with_limits,
     FilePreview,

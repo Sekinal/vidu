@@ -244,7 +244,7 @@ mod tests {
             modified: None,
             file_count: 5,
             dir_count: 2,
-            error: None,
+            ..Default::default()
         };
 
         manager.save(&entry).unwrap();

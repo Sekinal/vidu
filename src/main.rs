@@ -13,8 +13,10 @@
 //! vidu --hidden          # Show hidden files
 //! ```
 
+mod analyzer;
 mod app;
 mod cache;
+mod cleaner;
 mod config;
 mod constants;
 mod error;

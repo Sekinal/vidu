@@ -1,6 +1,8 @@
 //! Directory scanning with parallel processing
 
-use super::{Entry, ScanProgress};
+use super::{Entry, FileCategory, ScanProgress};
+use crate::analyzer::{detect_junk_type, JunkDetector};
+use crate::config::JunkConfig;
 use crate::constants::scanner::{MIN_ENTRIES_FOR_PARALLEL, PARALLEL_SCAN_DEPTH, PROGRESS_UPDATE_DEPTH};
 use rayon::prelude::*;
 use std::path::Path;
@@ -47,6 +49,12 @@ pub struct ScanOptions {
 
     /// Whether to skip virtual filesystems (/proc, /sys, /dev, etc.)
     pub skip_virtual: bool,
+
+    /// Whether to detect junk files/directories during scan
+    pub detect_junk: bool,
+
+    /// Whether to detect file categories
+    pub detect_categories: bool,
 }
 
 impl Default for ScanOptions {
@@ -56,6 +64,8 @@ impl Default for ScanOptions {
             max_depth: None,
             follow_symlinks: false,
             skip_virtual: true,
+            detect_junk: true,
+            detect_categories: true,
         }
     }
 }
@@ -70,6 +80,18 @@ impl ScanOptions {
     /// Create options with virtual filesystem skipping
     pub fn with_skip_virtual(mut self, skip: bool) -> Self {
         self.skip_virtual = skip;
+        self
+    }
+
+    /// Create options with junk detection
+    pub fn with_junk_detection(mut self, detect: bool) -> Self {
+        self.detect_junk = detect;
+        self
+    }
+
+    /// Create options with category detection
+    pub fn with_category_detection(mut self, detect: bool) -> Self {
+        self.detect_categories = detect;
         self
     }
 }
@@ -128,7 +150,7 @@ fn scan_internal(
         .to_string_lossy()
         .to_string();
 
-    let mut entry = Entry::new(path.clone(), name);
+    let mut entry = Entry::new(path.clone(), name.clone());
 
     let meta = match metadata {
         Ok(m) => m,
@@ -139,6 +161,7 @@ fn scan_internal(
     };
 
     entry.modified = meta.modified().ok();
+    entry.accessed = meta.accessed().ok();
 
     // Handle symlinks - don't follow them to avoid infinite loops
     if meta.is_symlink() && !options.follow_symlinks {
@@ -150,6 +173,11 @@ fn scan_internal(
     if meta.is_dir() {
         entry.is_dir = true;
         entry.dir_count = 1;
+
+        // Detect if this directory is junk
+        if options.detect_junk {
+            entry.junk_type = detect_junk_type(&name, true);
+        }
 
         // Update progress
         if let Some(p) = progress {
@@ -210,6 +238,18 @@ fn scan_internal(
         // File
         entry.size = meta.len();
         entry.file_count = 1;
+
+        // Detect file category from extension
+        if options.detect_categories {
+            if let Some(ext) = entry.path.extension() {
+                entry.category = FileCategory::from_extension(&ext.to_string_lossy());
+            }
+        }
+
+        // Detect if this file is junk
+        if options.detect_junk {
+            entry.junk_type = detect_junk_type(&name, false);
+        }
 
         if let Some(p) = progress {
             p.inc_files();
@@ -283,5 +323,64 @@ mod tests {
         let options = ScanOptions::default().with_hidden(true);
         let entry = scan(dir.path().to_path_buf(), &options);
         assert_eq!(entry.children.len(), 2);
+    }
+
+    #[test]
+    fn test_junk_detection() {
+        use crate::scanner::JunkType;
+
+        let dir = tempdir().unwrap();
+
+        // Create a node_modules directory
+        let nm = dir.path().join("node_modules");
+        fs::create_dir(&nm).unwrap();
+        File::create(nm.join("package.json")).unwrap();
+
+        // Create a .DS_Store file
+        File::create(dir.path().join(".DS_Store")).unwrap();
+
+        // Create a normal file
+        File::create(dir.path().join("main.rs")).unwrap();
+
+        let options = ScanOptions::default().with_hidden(true);
+        let entry = scan(dir.path().to_path_buf(), &options);
+
+        // Find node_modules - should be marked as junk
+        let nm_entry = entry.children.iter().find(|e| e.name == "node_modules");
+        assert!(nm_entry.is_some());
+        assert_eq!(nm_entry.unwrap().junk_type, Some(JunkType::BuildArtifact));
+
+        // Find .DS_Store - should be marked as junk
+        let ds_entry = entry.children.iter().find(|e| e.name == ".DS_Store");
+        assert!(ds_entry.is_some());
+        assert_eq!(ds_entry.unwrap().junk_type, Some(JunkType::SystemJunk));
+
+        // Find main.rs - should NOT be marked as junk
+        let main_entry = entry.children.iter().find(|e| e.name == "main.rs");
+        assert!(main_entry.is_some());
+        assert!(main_entry.unwrap().junk_type.is_none());
+    }
+
+    #[test]
+    fn test_category_detection() {
+        use crate::scanner::FileCategory;
+
+        let dir = tempdir().unwrap();
+
+        File::create(dir.path().join("code.rs")).unwrap();
+        File::create(dir.path().join("doc.pdf")).unwrap();
+        File::create(dir.path().join("image.png")).unwrap();
+
+        let options = ScanOptions::default();
+        let entry = scan(dir.path().to_path_buf(), &options);
+
+        let code = entry.children.iter().find(|e| e.name == "code.rs").unwrap();
+        assert_eq!(code.category, FileCategory::Code);
+
+        let doc = entry.children.iter().find(|e| e.name == "doc.pdf").unwrap();
+        assert_eq!(doc.category, FileCategory::Document);
+
+        let img = entry.children.iter().find(|e| e.name == "image.png").unwrap();
+        assert_eq!(img.category, FileCategory::Image);
     }
 }
