@@ -56,6 +56,7 @@ struct CacheData {
 }
 
 /// Cache manager for scan results
+#[derive(Clone)]
 pub struct CacheManager {
     cache_dir: PathBuf,
     max_age: Duration,

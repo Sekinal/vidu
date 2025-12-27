@@ -127,7 +127,8 @@ pub fn is_protected(path: &Path) -> bool {
 }
 
 /// Delete a path using the specified mode
-pub fn delete_path(path: &Path, mode: DeletionMode) -> DeleteResult<u64> {
+/// If known_size is provided, skip expensive size calculation
+pub fn delete_path_with_size(path: &Path, mode: DeletionMode, known_size: Option<u64>) -> DeleteResult<u64> {
     // Check if path exists
     if !path.exists() {
         return Err(DeleteError::NotFound(path.display().to_string()));
@@ -138,8 +139,8 @@ pub fn delete_path(path: &Path, mode: DeletionMode) -> DeleteResult<u64> {
         return Err(DeleteError::Protected(path.display().to_string()));
     }
 
-    // Get size before deletion
-    let size = get_size(path);
+    // Use known size or calculate (expensive for large dirs)
+    let size = known_size.unwrap_or_else(|| get_size(path));
 
     // Perform deletion
     match mode {
@@ -156,6 +157,11 @@ pub fn delete_path(path: &Path, mode: DeletionMode) -> DeleteResult<u64> {
     }
 
     Ok(size)
+}
+
+/// Delete a path using the specified mode (calculates size)
+pub fn delete_path(path: &Path, mode: DeletionMode) -> DeleteResult<u64> {
+    delete_path_with_size(path, mode, None)
 }
 
 /// Delete an Entry using the specified mode

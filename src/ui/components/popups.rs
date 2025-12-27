@@ -104,7 +104,7 @@ pub fn render_cleaning_popup(f: &mut Frame, app: &App) {
         crate::config::DeletionMode::Permanent => styles::danger(),
     };
 
-    let count = app.pending_clean_paths.len();
+    let count = app.pending_clean_items.len();
     let size = format_bytes(app.pending_clean_size);
 
     let mut text = vec![
@@ -123,7 +123,7 @@ pub fn render_cleaning_popup(f: &mut Frame, app: &App) {
 
     // Show some paths (up to 5)
     text.push(Line::from(vec![Span::styled("  Items:", styles::dim())]));
-    for (i, path) in app.pending_clean_paths.iter().take(5).enumerate() {
+    for (i, (path, _)) in app.pending_clean_items.iter().take(5).enumerate() {
         let display = crate::utils::truncate_str(&path.to_string_lossy(), 50);
         text.push(Line::from(format!("    {}. {}", i + 1, display)));
     }

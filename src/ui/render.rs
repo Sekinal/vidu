@@ -173,16 +173,17 @@ fn render_deletion_overlay(f: &mut Frame, app: &App, full_area: Rect) {
     let area = crate::utils::centered_rect(60, 40, full_area);
 
     // Get progress info
-    let (completed, total, freed, current, failed) = if let Some(ref progress) = app.deletion_progress {
+    let (completed, total, freed, current, failed, elapsed_secs) = if let Some(ref progress) = app.deletion_progress {
         (
             progress.completed_items,
             progress.total_items,
             progress.freed_bytes,
             progress.current_path.clone(),
             progress.failed_items,
+            progress.started_at.elapsed().as_secs(),
         )
     } else {
-        (0, 0, 0, String::new(), 0)
+        (0, 0, 0, String::new(), 0, 0)
     };
 
     let percent = if total > 0 {
@@ -201,8 +202,8 @@ fn render_deletion_overlay(f: &mut Frame, app: &App, full_area: Rect) {
         syms.bar_empty.repeat(empty)
     );
 
-    // Spinner
-    let spinner = syms.spinner_frame(completed);
+    // Animated spinner based on elapsed time (updates every 100ms)
+    let spinner = syms.spinner_frame(elapsed_secs as usize * 10 + (elapsed_secs as usize % 10));
 
     let mode_label = match app.deletion_mode {
         crate::config::DeletionMode::Trash => "Moving to trash",
@@ -210,6 +211,13 @@ fn render_deletion_overlay(f: &mut Frame, app: &App, full_area: Rect) {
     };
 
     let remaining = total.saturating_sub(completed);
+
+    // Format elapsed time
+    let elapsed_str = if elapsed_secs >= 60 {
+        format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
+    } else {
+        format!("{}s", elapsed_secs)
+    };
 
     let progress_text = vec![
         Line::from(""),
@@ -226,6 +234,7 @@ fn render_deletion_overlay(f: &mut Frame, app: &App, full_area: Rect) {
                 if remaining > 0 { styles::warning() } else { styles::success() }
             ),
             Span::styled(format!(" / {}", total), styles::dim()),
+            Span::styled(format!("  ({})", elapsed_str), styles::dim()),
         ]),
         Line::from(""),
         // Progress bar

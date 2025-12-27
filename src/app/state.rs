@@ -157,7 +157,7 @@ pub struct App {
     pub analysis_selected: usize,
 
     // Cleaning state
-    pub pending_clean_paths: Vec<PathBuf>,
+    pub pending_clean_items: Vec<(PathBuf, u64)>,  // (path, size) pairs
     pub pending_clean_size: u64,
     pub last_clean_result: Option<crate::cleaner::CleaningResult>,
 
@@ -174,6 +174,7 @@ pub struct DeletionProgress {
     pub freed_bytes: u64,
     pub current_path: String,
     pub failed_items: usize,
+    pub started_at: std::time::Instant,
 }
 
 impl App {
@@ -242,7 +243,7 @@ impl App {
             system_caches: None,
             analysis_scroll: 0,
             analysis_selected: 0,
-            pending_clean_paths: Vec::new(),
+            pending_clean_items: Vec::new(),
             pending_clean_size: 0,
             last_clean_result: None,
             deletion_progress: None,
@@ -338,71 +339,189 @@ impl App {
         Ok(())
     }
 
-    /// Run the deletion phase with live progress updates
+    /// Run the deletion phase with live progress updates (background thread)
     fn run_with_deleting<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         use crate::cleaner::CleaningResult;
+        use std::sync::mpsc;
+        use std::io::Write;
 
-        let mut result = CleaningResult::new();
-        let paths: Vec<_> = self.pending_clean_paths.clone();
-        let total = paths.len();
+        // Debug timing
+        let debug_start = std::time::Instant::now();
+        let mut debug_log = std::fs::File::create("/tmp/vidu_debug.log").ok();
+        macro_rules! debug {
+            ($($arg:tt)*) => {
+                if let Some(ref mut f) = debug_log {
+                    let _ = writeln!(f, "[{:?}] {}", debug_start.elapsed(), format!($($arg)*));
+                    let _ = f.flush();
+                }
+            };
+        }
 
-        for (i, path) in paths.iter().enumerate() {
-            // Update progress before each deletion
-            if let Some(ref mut progress) = self.deletion_progress {
+        debug!("run_with_deleting started");
+
+        let items: Vec<_> = self.pending_clean_items.clone();
+        let total = items.len();
+        let mode = self.deletion_mode;
+
+        debug!("items cloned, total={}", total);
+
+        // Render initial state (0% progress) before starting deletions
+        if let Some(ref mut progress) = self.deletion_progress {
+            progress.completed_items = 0;
+            progress.freed_bytes = 0;
+            if let Some((path, _)) = items.first() {
                 progress.current_path = path.display().to_string();
-                progress.completed_items = i;
+            }
+        }
+        debug!("about to render initial state");
+        terminal.draw(|f| ui::render::render(f, self))?;
+        debug!("initial render done");
+
+        // Create channel for progress updates from deletion thread
+        let (tx, rx) = mpsc::channel::<(usize, PathBuf, Result<u64, String>)>();
+
+        debug!("spawning deletion thread");
+        // Spawn background thread for deletions
+        let delete_handle = thread::spawn(move || {
+            let thread_start = std::time::Instant::now();
+            let mut thread_log = std::fs::OpenOptions::new()
+                .create(true).append(true)
+                .open("/tmp/vidu_debug.log").ok();
+
+            let mut result = CleaningResult::new();
+            for (i, (path, known_size)) in items.iter().enumerate() {
+                if let Some(ref mut f) = thread_log {
+                    let _ = writeln!(f, "[THREAD {:?}] deleting item {}: {:?}", thread_start.elapsed(), i, path);
+                    let _ = f.flush();
+                }
+                let delete_result = crate::cleaner::delete_path_with_size(path, mode, Some(*known_size));
+                if let Some(ref mut f) = thread_log {
+                    let _ = writeln!(f, "[THREAD {:?}] deleted item {}: {:?}", thread_start.elapsed(), i, delete_result.is_ok());
+                    let _ = f.flush();
+                }
+                let msg = match &delete_result {
+                    Ok(size) => {
+                        result.add_success(*size);
+                        Ok(*size)
+                    }
+                    Err(e) => {
+                        result.add_failure(path.clone(), e.to_string());
+                        Err(e.to_string())
+                    }
+                };
+                // Send progress update (ignore error if receiver dropped due to cancel)
+                let _ = tx.send((i, path.clone(), msg));
+                if let Some(ref mut f) = thread_log {
+                    let _ = writeln!(f, "[THREAD {:?}] sent message for item {}", thread_start.elapsed(), i);
+                    let _ = f.flush();
+                }
+            }
+            if let Some(ref mut f) = thread_log {
+                let _ = writeln!(f, "[THREAD {:?}] thread done", thread_start.elapsed());
+            }
+            result
+        });
+        debug!("thread spawned");
+
+        // Poll for updates while deletion is running
+        let mut completed = 0;
+        let mut final_result = CleaningResult::new();
+        let mut cancelled = false;
+        let mut loop_count = 0;
+
+        debug!("entering polling loop, total={}", total);
+
+        while completed < total && !cancelled {
+            loop_count += 1;
+            if loop_count % 20 == 1 {
+                debug!("loop iteration {}, completed={}", loop_count, completed);
             }
 
-            // Render progress
+            // Render current state
             terminal.draw(|f| ui::render::render(f, self))?;
 
-            // Check for cancel (non-blocking)
-            if event::poll(Duration::from_millis(1))? {
+            // Check for cancel key (non-blocking, 50ms timeout for responsive UI)
+            if event::poll(Duration::from_millis(50))? {
                 if let Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press
                         && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
                     {
-                        // Cancel deletion
-                        self.deletion_progress = None;
-                        self.pending_clean_paths.clear();
-                        self.pending_clean_size = 0;
-                        self.state = AppState::Browsing;
-                        self.status_msg = format!("Cancelled after {} of {} items", i, total);
-                        return Ok(());
+                        cancelled = true;
+                        self.status_msg = format!("Cancelling... (waiting for current operation)");
+                        terminal.draw(|f| ui::render::render(f, self))?;
                     }
                 }
             }
 
-            // Perform deletion
-            match crate::cleaner::delete_path(&path, self.deletion_mode) {
-                Ok(size) => {
-                    result.add_success(size);
-                    if let Some(ref mut progress) = self.deletion_progress {
-                        progress.freed_bytes += size;
+            // Process any completed deletions from the channel
+            while let Ok((i, path, result)) = rx.try_recv() {
+                debug!("received completion for item {}", i);
+                completed = i + 1;
+                if let Some(ref mut progress) = self.deletion_progress {
+                    progress.completed_items = completed;
+                    match result {
+                        Ok(size) => {
+                            progress.freed_bytes += size;
+                            final_result.add_success(size);
+                        }
+                        Err(ref e) => {
+                            progress.failed_items += 1;
+                            final_result.add_failure(path.clone(), e.clone());
+                        }
                     }
-                }
-                Err(e) => {
-                    result.add_failure(path.clone(), e.to_string());
-                    if let Some(ref mut progress) = self.deletion_progress {
-                        progress.failed_items += 1;
+                    // Update current path to next item
+                    if completed < total {
+                        if let Some((next_path, _)) = self.pending_clean_items.get(completed) {
+                            progress.current_path = next_path.display().to_string();
+                        }
                     }
                 }
             }
         }
 
-        // Mark complete
-        if let Some(ref mut progress) = self.deletion_progress {
-            progress.completed_items = total;
+        // Wait for deletion thread to finish (it will complete current operation)
+        if let Ok(result) = delete_handle.join() {
+            // Drain any remaining messages
+            while let Ok((i, path, res)) = rx.try_recv() {
+                if let Some(ref mut progress) = self.deletion_progress {
+                    progress.completed_items = i + 1;
+                    match res {
+                        Ok(size) => {
+                            progress.freed_bytes += size;
+                            final_result.add_success(size);
+                        }
+                        Err(ref e) => {
+                            progress.failed_items += 1;
+                            final_result.add_failure(path.clone(), e.clone());
+                        }
+                    }
+                }
+            }
+            // Use the thread's result if we didn't cancel
+            if !cancelled {
+                final_result = result;
+            }
         }
 
         // Final render
         terminal.draw(|f| ui::render::render(f, self))?;
 
-        // Small delay to show completion
-        std::thread::sleep(Duration::from_millis(200));
-
-        // Finish up
-        self.finish_deletion(result);
+        if cancelled {
+            self.deletion_progress = None;
+            self.pending_clean_items.clear();
+            self.pending_clean_size = 0;
+            self.state = AppState::Browsing;
+            self.status_msg = format!(
+                "Cancelled after {} of {} items (freed {})",
+                completed,
+                total,
+                crate::utils::format_bytes(final_result.bytes_freed)
+            );
+        } else {
+            // Brief delay to show completion state
+            thread::sleep(Duration::from_millis(100));
+            self.finish_deletion(final_result);
+        }
 
         Ok(())
     }
