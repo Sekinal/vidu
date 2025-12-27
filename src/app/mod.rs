@@ -10,4 +10,4 @@ pub use input::{
     Action, AnalysisAction, DeleteConfirmAction, HelpAction, KeyBindings, PreviewAction,
     SearchAction,
 };
-pub use state::{App, AppState, SortMode, SortOrder, ViewMode};
+pub use state::{App, AppState, DeletionProgress, SortMode, SortOrder, ViewMode};

@@ -467,23 +467,72 @@ impl App {
         self.state = AppState::CleaningConfirm;
     }
 
-    /// Execute the pending cleaning operation
+    /// Execute the pending cleaning operation - starts deletion with progress
     pub fn execute_cleaning(&mut self) {
-        use crate::cleaner::BatchCleaner;
-
         if self.pending_clean_paths.is_empty() {
             self.state = AppState::Browsing;
             return;
         }
+
+        // Initialize deletion progress
+        self.deletion_progress = Some(super::state::DeletionProgress {
+            total_items: self.pending_clean_paths.len(),
+            completed_items: 0,
+            total_bytes: self.pending_clean_size,
+            freed_bytes: 0,
+            current_path: String::new(),
+            failed_items: 0,
+        });
+
+        // Switch to deleting state - actual deletion happens in run_with_deleting
+        self.state = AppState::Deleting;
+    }
+
+    /// Actually perform the deletion with live progress updates
+    pub fn perform_deletion(&mut self) -> crate::cleaner::CleaningResult {
+        use crate::cleaner::BatchCleaner;
 
         let mut cleaner = BatchCleaner::new(self.deletion_mode);
         for path in &self.pending_clean_paths {
             cleaner.add_path(path.clone());
         }
 
-        // Execute the cleaning
-        let result = cleaner.execute();
+        let mut result = crate::cleaner::CleaningResult::new();
 
+        for (i, path) in self.pending_clean_paths.iter().enumerate() {
+            // Update progress
+            if let Some(ref mut progress) = self.deletion_progress {
+                progress.current_path = path.display().to_string();
+                progress.completed_items = i;
+            }
+
+            // Perform deletion
+            match crate::cleaner::delete_path(path, self.deletion_mode) {
+                Ok(size) => {
+                    result.add_success(size);
+                    if let Some(ref mut progress) = self.deletion_progress {
+                        progress.freed_bytes += size;
+                    }
+                }
+                Err(e) => {
+                    result.add_failure(path.clone(), e.to_string());
+                    if let Some(ref mut progress) = self.deletion_progress {
+                        progress.failed_items += 1;
+                    }
+                }
+            }
+        }
+
+        // Mark as complete
+        if let Some(ref mut progress) = self.deletion_progress {
+            progress.completed_items = progress.total_items;
+        }
+
+        result
+    }
+
+    /// Finish the deletion process and update state
+    pub fn finish_deletion(&mut self, result: crate::cleaner::CleaningResult) {
         // Update disk available space
         self.disk_available = self.disk_available.saturating_add(result.bytes_freed);
 
@@ -508,6 +557,7 @@ impl App {
         self.last_clean_result = Some(result);
         self.pending_clean_paths.clear();
         self.pending_clean_size = 0;
+        self.deletion_progress = None;
 
         if failed == 0 {
             self.status_msg = format!(

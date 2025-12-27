@@ -91,7 +91,7 @@ pub fn render_footer(f: &mut Frame, app: &App, area: Rect) {
         AppState::Preview => &[("Esc", "close")],
         AppState::Help => &[("Esc", "close")],
         AppState::Search => &[("Enter", "search"), ("Esc", "cancel")],
-        AppState::Scanning => &[("Esc", "cancel")],
+        AppState::Scanning | AppState::Deleting => &[],
         AppState::JunkAnalysis
         | AppState::DuplicateAnalysis
         | AppState::FileTypeAnalysis

@@ -23,6 +23,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
         return;
     }
 
+    // If deleting, show the deletion progress overlay (full screen)
+    if app.state == AppState::Deleting {
+        render_deletion_overlay(f, app, area);
+        return;
+    }
+
     // Main layout
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -54,7 +60,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         AppState::Search => {
             popups::render_search_popup(f, app);
         }
-        AppState::Scanning => {
+        AppState::Scanning | AppState::Deleting => {
             // Already handled above
         }
         // Analysis views - rendered as overlays
@@ -153,6 +159,103 @@ fn render_scanning_overlay(f: &mut Frame, app: &App, full_area: Rect) {
                 .borders(Borders::ALL)
                 .border_style(styles::accent())
                 .title(format!(" {} Scanning ", syms.refresh))
+                .title_style(styles::accent()),
+        )
+        .alignment(Alignment::Center);
+
+    f.render_widget(popup, area);
+}
+
+/// Render deletion progress overlay with progress bar
+fn render_deletion_overlay(f: &mut Frame, app: &App, full_area: Rect) {
+    let t = theme();
+    let syms = symbols();
+    let area = crate::utils::centered_rect(60, 40, full_area);
+
+    // Get progress info
+    let (completed, total, freed, current, failed) = if let Some(ref progress) = app.deletion_progress {
+        (
+            progress.completed_items,
+            progress.total_items,
+            progress.freed_bytes,
+            progress.current_path.clone(),
+            progress.failed_items,
+        )
+    } else {
+        (0, 0, 0, String::new(), 0)
+    };
+
+    let percent = if total > 0 {
+        (completed as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    // Build progress bar
+    let bar_width = 30;
+    let filled = ((percent / 100.0) * bar_width as f64) as usize;
+    let empty = bar_width - filled;
+    let bar = format!(
+        "{}{}",
+        syms.bar_filled.repeat(filled),
+        syms.bar_empty.repeat(empty)
+    );
+
+    // Spinner
+    let spinner = syms.spinner_frame(completed);
+
+    let mode_label = match app.deletion_mode {
+        crate::config::DeletionMode::Trash => "Moving to trash",
+        crate::config::DeletionMode::Permanent => "Permanently deleting",
+    };
+
+    let progress_text = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(format!(" {} ", spinner), styles::accent()),
+            Span::styled(format!("{}...", mode_label), styles::accent()),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(format!("  {} ", bar), t.bar_color(percent)),
+            Span::styled(format!("{:.0}%", percent), styles::size()),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Progress: ", styles::dim()),
+            Span::styled(format!("{} / {} items", completed, total), styles::size()),
+        ]),
+        Line::from(vec![
+            Span::styled("  Freed:    ", styles::dim()),
+            Span::styled(crate::utils::format_bytes(freed), styles::success()),
+        ]),
+        if failed > 0 {
+            Line::from(vec![
+                Span::styled("  Failed:   ", styles::dim()),
+                Span::styled(format!("{}", failed), styles::danger()),
+            ])
+        } else {
+            Line::from("")
+        },
+        Line::from(""),
+        Line::from(vec![Span::styled(" Current:", styles::dim())]),
+        Line::from(vec![Span::raw(format!(
+            "  {}",
+            crate::utils::truncate_str(&current, 50)
+        ))]),
+    ];
+
+    let title = match app.deletion_mode {
+        crate::config::DeletionMode::Trash => format!(" {} Cleaning ", syms.trash),
+        crate::config::DeletionMode::Permanent => format!(" {} Deleting ", syms.delete_perm),
+    };
+
+    let popup = Paragraph::new(progress_text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(styles::accent())
+                .title(title)
                 .title_style(styles::accent()),
         )
         .alignment(Alignment::Center);

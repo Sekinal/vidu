@@ -23,6 +23,7 @@ use sysinfo::Disks;
 pub enum AppState {
     Browsing,
     DeleteConfirm,
+    Deleting, // Shows deletion progress
     Preview,
     Help,
     Search,
@@ -159,6 +160,20 @@ pub struct App {
     pub pending_clean_paths: Vec<PathBuf>,
     pub pending_clean_size: u64,
     pub last_clean_result: Option<crate::cleaner::CleaningResult>,
+
+    // Deletion progress (for visual feedback)
+    pub deletion_progress: Option<DeletionProgress>,
+}
+
+/// Progress tracking for deletion operations
+#[derive(Debug, Clone)]
+pub struct DeletionProgress {
+    pub total_items: usize,
+    pub completed_items: usize,
+    pub total_bytes: u64,
+    pub freed_bytes: u64,
+    pub current_path: String,
+    pub failed_items: usize,
 }
 
 impl App {
@@ -230,6 +245,7 @@ impl App {
             pending_clean_paths: Vec::new(),
             pending_clean_size: 0,
             last_clean_result: None,
+            deletion_progress: None,
         };
 
         // Select first item if available (for cached entries)
@@ -298,6 +314,12 @@ impl App {
         let poll_timeout = Duration::from_millis(EVENT_POLL_TIMEOUT_MS);
 
         loop {
+            // Handle deleting state with live progress
+            if self.state == AppState::Deleting {
+                self.run_with_deleting(terminal)?;
+                continue;
+            }
+
             // Render
             terminal.draw(|f| ui::render::render(f, self))?;
 
@@ -312,6 +334,20 @@ impl App {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    /// Run the deletion phase with live progress updates
+    fn run_with_deleting<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+        // Render initial state
+        terminal.draw(|f| ui::render::render(f, self))?;
+
+        // Perform deletion with progress updates
+        let result = self.perform_deletion();
+
+        // Finish up
+        self.finish_deletion(result);
 
         Ok(())
     }
@@ -395,8 +431,8 @@ impl App {
             AppState::Preview => self.handle_preview_key(code),
             AppState::Help => self.handle_help_key(code),
             AppState::Search => self.handle_search_key(code),
-            AppState::Scanning => {
-                // Allow quit during scanning
+            AppState::Scanning | AppState::Deleting => {
+                // Allow quit during scanning/deleting
                 matches!(code, KeyCode::Char('q') | KeyCode::Esc)
             }
             // Analysis views share common input handling
