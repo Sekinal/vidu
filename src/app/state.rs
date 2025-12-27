@@ -5,12 +5,12 @@ use super::input::{
 };
 use crate::cache::CacheManager;
 use crate::constants::ui::EVENT_POLL_TIMEOUT_MS;
-use crate::scanner::{scan, Entry, ScanOptions, ScanProgress};
+use crate::scanner::{scan_with_progress, Entry, ScanOptions, ScanProgress};
 use crate::ui;
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{prelude::*, widgets::TableState};
-use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashSet, path::PathBuf, sync::Arc, thread, time::Duration};
 use sysinfo::Disks;
 
 /// Current application state/mode
@@ -129,6 +129,7 @@ pub struct App {
 }
 
 impl App {
+    /// Create a new app - this will be in Scanning state initially
     pub fn new(path: PathBuf, force_fresh: bool, show_hidden: bool) -> Result<Self> {
         // Get disk info
         let (disk_total, disk_available) = Self::get_disk_info(&path);
@@ -136,21 +137,25 @@ impl App {
         // Initialize cache manager
         let cache_manager = CacheManager::new().ok();
 
-        // Create scan options
-        let scan_options = ScanOptions::default().with_hidden(show_hidden);
-
-        // Try to load from cache unless force_fresh
-        let (root, from_cache) = if !force_fresh {
-            if let Some(ref cm) = cache_manager {
-                match cm.load(&path) {
-                    Ok(entry) => (entry, true),
-                    Err(_) => (scan(path.clone(), &scan_options), false),
-                }
-            } else {
-                (scan(path.clone(), &scan_options), false)
-            }
+        // Try to load from cache first (instant)
+        let cached_entry = if !force_fresh {
+            cache_manager.as_ref().and_then(|cm| cm.load(&path).ok())
         } else {
-            (scan(path.clone(), &scan_options), false)
+            None
+        };
+
+        let (root, state, status_msg) = if let Some(entry) = cached_entry {
+            (entry, AppState::Browsing, "Loaded from cache".to_string())
+        } else {
+            // Create empty root - will scan with progress
+            let name = path
+                .file_name()
+                .unwrap_or(std::ffi::OsStr::new("."))
+                .to_string_lossy()
+                .to_string();
+            let mut root = Entry::new(path.clone(), name);
+            root.is_dir = true;
+            (root, AppState::Scanning, "Scanning...".to_string())
         };
 
         let mut app = Self {
@@ -158,16 +163,12 @@ impl App {
             original_path: path,
             nav_stack: Vec::new(),
             table_state: TableState::default(),
-            state: AppState::Browsing,
+            state,
             view_mode: ViewMode::Tree,
             sort_mode: SortMode::Size,
             sort_order: SortOrder::Descending,
             show_hidden,
-            status_msg: if from_cache {
-                "Loaded from cache".to_string()
-            } else {
-                "Scanned".to_string()
-            },
+            status_msg,
             error_msg: None,
             disk_total,
             disk_available,
@@ -176,25 +177,60 @@ impl App {
             search_query: String::new(),
             search_results: Vec::new(),
             search_index: 0,
-            scan_progress: None,
+            scan_progress: if state == AppState::Scanning {
+                Some(ScanProgress::new())
+            } else {
+                None
+            },
             marked_items: HashSet::new(),
             force_fresh,
             cache_manager,
         };
 
-        // Select first item if available
+        // Select first item if available (for cached entries)
         if !app.root.children.is_empty() {
             app.table_state.select(Some(0));
         }
 
-        // Save cache if we just scanned
-        if !from_cache {
-            if let Some(ref cm) = app.cache_manager {
-                let _ = cm.save(&app.root);
-            }
+        Ok(app)
+    }
+
+    /// Start the background scan (call this after showing initial UI)
+    fn start_background_scan(&mut self) {
+        if self.state != AppState::Scanning {
+            return;
         }
 
-        Ok(app)
+        let path = self.original_path.clone();
+        let show_hidden = self.show_hidden;
+        let progress = self.scan_progress.clone();
+
+        // Spawn scanning thread
+        let scan_options = ScanOptions::default().with_hidden(show_hidden);
+
+        // We need to do the scan in the main thread for now since Entry isn't Send
+        // But we can still show progress during iteration
+        if let Some(ref p) = progress {
+            self.root = scan_with_progress(path, &scan_options, Some(p.clone()));
+            p.mark_complete();
+        }
+
+        // Transition to browsing
+        self.state = AppState::Browsing;
+        self.scan_progress = None;
+
+        if !self.root.children.is_empty() {
+            self.table_state.select(Some(0));
+        }
+
+        // Update status
+        self.status_msg = format!(
+            "Scanned {} files, {} dirs",
+            self.root.file_count, self.root.dir_count
+        );
+
+        // Save to cache
+        self.save_to_cache();
     }
 
     fn get_disk_info(path: &PathBuf) -> (u64, u64) {
@@ -209,6 +245,11 @@ impl App {
 
     /// Main event loop
     pub fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+        // If we need to scan, do it with live progress updates
+        if self.state == AppState::Scanning {
+            self.run_with_scanning(terminal)?;
+        }
+
         let poll_timeout = Duration::from_millis(EVENT_POLL_TIMEOUT_MS);
 
         loop {
@@ -230,6 +271,70 @@ impl App {
         Ok(())
     }
 
+    /// Run the scanning phase with live progress updates
+    fn run_with_scanning<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+        let path = self.original_path.clone();
+        let show_hidden = self.show_hidden;
+        let progress = self.scan_progress.clone().unwrap();
+
+        // Spawn the scan in a background thread
+        let scan_progress = progress.clone();
+        let scan_path = path.clone();
+        let scan_handle = thread::spawn(move || {
+            let scan_options = ScanOptions::default().with_hidden(show_hidden);
+            let result = scan_with_progress(scan_path, &scan_options, Some(scan_progress.clone()));
+            scan_progress.mark_complete();
+            result
+        });
+
+        // Show progress while scanning
+        let poll_timeout = Duration::from_millis(50); // Fast updates for smooth progress
+
+        while !progress.is_complete() {
+            // Render progress
+            terminal.draw(|f| ui::render::render(f, self))?;
+
+            // Check for quit key
+            if event::poll(poll_timeout)? {
+                if let Event::Key(key) = event::read()? {
+                    if key.kind == KeyEventKind::Press {
+                        if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
+                            progress.cancel();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Get the scan result
+        match scan_handle.join() {
+            Ok(root) => {
+                self.root = root;
+                self.state = AppState::Browsing;
+                self.scan_progress = None;
+
+                if !self.root.children.is_empty() {
+                    self.table_state.select(Some(0));
+                }
+
+                self.status_msg = format!(
+                    "Scanned {} files, {} dirs",
+                    self.root.file_count, self.root.dir_count
+                );
+
+                // Save to cache
+                self.save_to_cache();
+            }
+            Err(_) => {
+                self.error_msg = Some("Scan failed".to_string());
+                self.state = AppState::Browsing;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Handle key press, returns true if should quit
     fn handle_key(
         &mut self,
@@ -245,7 +350,10 @@ impl App {
             AppState::Preview => self.handle_preview_key(code),
             AppState::Help => self.handle_help_key(code),
             AppState::Search => self.handle_search_key(code),
-            AppState::Scanning => false,
+            AppState::Scanning => {
+                // Allow quit during scanning
+                matches!(code, KeyCode::Char('q') | KeyCode::Esc)
+            }
         }
     }
 

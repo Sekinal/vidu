@@ -2,7 +2,8 @@
 
 use super::state::{App, AppState, SortMode, SortOrder};
 use crate::scanner::{
-    directory_preview, file_info_preview, read_file_preview, refresh_children, scan, ScanOptions,
+    directory_preview, file_info_preview, read_file_preview, refresh_children, scan_with_progress,
+    ScanOptions,
 };
 use crate::utils::{format_bytes, format_time, is_text_file};
 
@@ -233,7 +234,7 @@ impl App {
 
         let path = self.original_path.clone();
         let options = ScanOptions::default().with_hidden(self.show_hidden);
-        self.root = scan(path, &options);
+        self.root = scan_with_progress(path, &options, None);
         self.nav_stack.clear();
 
         if !self.root.children.is_empty() {
@@ -243,7 +244,10 @@ impl App {
         }
 
         self.save_to_cache();
-        self.status_msg = "Rescan complete".to_string();
+        self.status_msg = format!(
+            "Scanned {} files, {} dirs",
+            self.root.file_count, self.root.dir_count
+        );
     }
 
     // ==========================================

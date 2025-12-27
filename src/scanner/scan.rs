@@ -5,6 +5,43 @@ use crate::constants::scanner::{MIN_ENTRIES_FOR_PARALLEL, PARALLEL_SCAN_DEPTH, P
 use rayon::prelude::*;
 use std::{fs, path::PathBuf, sync::Arc};
 
+/// Virtual/pseudo filesystems that should be skipped
+/// These don't represent real disk usage
+const VIRTUAL_FILESYSTEMS: &[&str] = &[
+    "/proc",
+    "/sys",
+    "/dev",
+    "/run",
+    "/snap",
+];
+
+/// Specific paths that report fake sizes
+const SKIP_PATHS: &[&str] = &[
+    "/proc/kcore",      // Reports ~128TB (kernel virtual memory)
+    "/sys/kernel",
+];
+
+/// Check if a path is a virtual filesystem that should be skipped
+fn is_virtual_filesystem(path: &PathBuf) -> bool {
+    let path_str = path.to_string_lossy();
+
+    // Check exact virtual filesystem roots
+    for vfs in VIRTUAL_FILESYSTEMS {
+        if path_str == *vfs || path_str.starts_with(&format!("{}/", vfs)) {
+            return true;
+        }
+    }
+
+    // Check specific skip paths
+    for skip in SKIP_PATHS {
+        if path_str == *skip {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Options for scanning
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
@@ -16,6 +53,9 @@ pub struct ScanOptions {
 
     /// Whether to follow symlinks
     pub follow_symlinks: bool,
+
+    /// Whether to skip virtual filesystems (/proc, /sys, /dev, etc.)
+    pub skip_virtual: bool,
 }
 
 impl Default for ScanOptions {
@@ -24,6 +64,7 @@ impl Default for ScanOptions {
             show_hidden: false,
             max_depth: None,
             follow_symlinks: false,
+            skip_virtual: true,
         }
     }
 }
@@ -32,6 +73,12 @@ impl ScanOptions {
     /// Create options with hidden files shown
     pub fn with_hidden(mut self, show: bool) -> Self {
         self.show_hidden = show;
+        self
+    }
+
+    /// Create options with virtual filesystem skipping
+    pub fn with_skip_virtual(mut self, skip: bool) -> Self {
+        self.skip_virtual = skip;
         self
     }
 }
@@ -68,6 +115,19 @@ fn scan_internal(
         if depth > max {
             return Entry::default();
         }
+    }
+
+    // Skip virtual filesystems
+    if options.skip_virtual && is_virtual_filesystem(&path) {
+        let name = path
+            .file_name()
+            .unwrap_or(std::ffi::OsStr::new("."))
+            .to_string_lossy()
+            .to_string();
+        let mut entry = Entry::new(path.clone(), name);
+        entry.is_dir = true;
+        entry.error = Some("Virtual filesystem (skipped)".to_string());
+        return entry;
     }
 
     let metadata = fs::symlink_metadata(&path);

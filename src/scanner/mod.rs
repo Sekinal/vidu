@@ -14,4 +14,4 @@ pub use preview::{
     FilePreview,
 };
 pub use progress::{ProgressSummary, ScanProgress};
-pub use scan::{refresh_children, scan, scan_with_progress, ScanOptions};
+pub use scan::{refresh_children, scan_with_progress, ScanOptions};
