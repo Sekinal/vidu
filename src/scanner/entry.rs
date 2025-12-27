@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::SystemTime};
 
 /// File category based on content type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum FileCategory {
     #[default]
     Unknown,
