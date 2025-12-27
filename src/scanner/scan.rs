@@ -173,11 +173,15 @@ fn scan_internal(
             Ok(rd) => rd
                 .filter_map(|r| r.ok())
                 .filter(|e| {
-                    if options.show_hidden {
-                        true
-                    } else {
-                        !e.file_name().to_string_lossy().starts_with('.')
+                    // Filter hidden files
+                    if !options.show_hidden && e.file_name().to_string_lossy().starts_with('.') {
+                        return false;
                     }
+                    // Filter virtual filesystems
+                    if options.skip_virtual && is_virtual_filesystem(&e.path()) {
+                        return false;
+                    }
+                    true
                 })
                 .collect(),
             Err(e) => {
