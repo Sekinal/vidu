@@ -631,7 +631,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert!(!config.show_hidden);
+        assert!(config.show_hidden); // Show all files by default for disk analysis
         assert!(config.junk.auto_detect);
         assert_eq!(config.junk.deletion_mode, DeletionMode::Trash);
     }

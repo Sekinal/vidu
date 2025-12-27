@@ -623,6 +623,24 @@ impl App {
         None
     }
 
+    /// Map actual index to visible index in children array
+    pub fn actual_to_visible_index(&self, actual_idx: usize) -> Option<usize> {
+        let children = &self.current_view().children;
+        if actual_idx >= children.len() {
+            return None;
+        }
+        // If the item at actual_idx is hidden and we're not showing hidden, return None
+        if !self.show_hidden && children[actual_idx].hidden {
+            return None;
+        }
+        // Count visible items before this index
+        let visible_idx = children[..actual_idx]
+            .iter()
+            .filter(|c| self.show_hidden || !c.hidden)
+            .count();
+        Some(visible_idx)
+    }
+
     /// Get selected item in current view (respects show_hidden)
     pub fn selected_item(&self) -> Option<&Entry> {
         let visible_idx = self.table_state.selected()?;

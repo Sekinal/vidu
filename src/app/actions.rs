@@ -85,14 +85,18 @@ impl App {
     }
 
     pub fn go_back(&mut self) {
-        if !self.nav_stack.is_empty() {
-            let _actual_idx = self.nav_stack.pop().unwrap();
-            // Clamp selection to visible range (the item we came from might be hidden now)
-            let visible_count = self.visible_children_count();
-            if visible_count > 0 {
-                self.table_state.select(Some(0));
+        if let Some(actual_idx) = self.nav_stack.pop() {
+            // Convert actual index back to visible index
+            if let Some(visible_idx) = self.actual_to_visible_index(actual_idx) {
+                self.table_state.select(Some(visible_idx));
             } else {
-                self.table_state.select(None);
+                // Item is hidden, select first visible item
+                let visible_count = self.visible_children_count();
+                if visible_count > 0 {
+                    self.table_state.select(Some(0));
+                } else {
+                    self.table_state.select(None);
+                }
             }
         }
     }
