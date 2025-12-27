@@ -1,7 +1,6 @@
 //! Footer component with status and key hints
 
 use crate::app::{App, AppState};
-use crate::config::DeletionMode;
 use crate::ui::symbols::symbols;
 use crate::ui::theme::{styles, theme};
 use crate::utils::format_bytes;
@@ -13,24 +12,11 @@ pub fn render_footer(f: &mut Frame, app: &App, area: Rect) {
     let syms = symbols();
     let mut spans = Vec::new();
 
-    // Mode indicators (always visible on left)
-    // Deletion mode badge
-    let del_mode_style = match app.deletion_mode {
-        DeletionMode::Trash => styles::success(),
-        DeletionMode::Permanent => styles::danger(),
-    };
-    spans.push(Span::styled(
-        format!(" [{}] ", app.deletion_mode.label().to_uppercase()),
-        del_mode_style,
-    ));
-
     // Hidden files indicator
     if app.show_hidden {
-        spans.push(Span::styled("[.*] ", styles::dim()));
+        spans.push(Span::styled(" [.*] ", styles::dim()));
+        spans.push(Span::styled("│ ", styles::dim()));
     }
-
-    // Separator
-    spans.push(Span::styled("│ ", styles::dim()));
 
     // Sort mode indicator
     let sort_indicator = format!(
@@ -85,8 +71,8 @@ pub fn render_footer(f: &mut Frame, app: &App, area: Rect) {
             ("?", "help"),
             ("q", "quit"),
         ],
-        AppState::DeleteConfirm | AppState::CleaningConfirm => {
-            &[("y", "confirm"), ("n", "cancel")]
+        AppState::DeleteConfirm => {
+            &[("y", "trash"), ("Y", "perm"), ("Esc", "cancel")]
         }
         AppState::Preview => &[("Esc", "close")],
         AppState::Help => &[("Esc", "close")],
@@ -98,7 +84,7 @@ pub fn render_footer(f: &mut Frame, app: &App, area: Rect) {
         | AppState::AgeAnalysis
         | AppState::LargeFilesView
         | AppState::CacheView => &[
-            ("c", "clean"),
+            ("d", "delete"),
             ("Esc", "close"),
         ],
     };

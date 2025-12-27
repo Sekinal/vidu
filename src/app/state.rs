@@ -35,7 +35,6 @@ pub enum AppState {
     AgeAnalysis,
     LargeFilesView,
     CacheView,
-    CleaningConfirm,
 }
 
 /// What view we're displaying
@@ -616,7 +615,6 @@ impl App {
             | AppState::AgeAnalysis
             | AppState::LargeFilesView
             | AppState::CacheView => self.handle_analysis_key(code),
-            AppState::CleaningConfirm => self.handle_cleaning_confirm_key(code),
         }
     }
 
@@ -663,9 +661,6 @@ impl App {
             Action::ShowOldFiles => self.show_old_files(),
             Action::ShowLargeFiles => self.show_large_files(),
             Action::ShowCaches => self.show_caches(),
-            Action::CleanSelected => self.prepare_clean_marked(),
-            Action::CleanAllJunk => self.prepare_clean_all_junk(),
-            Action::ToggleDeletionMode => self.toggle_deletion_mode(),
             Action::None => {}
         }
 
@@ -674,17 +669,19 @@ impl App {
 
     fn handle_delete_confirm_key(&mut self, code: crossterm::event::KeyCode) -> bool {
         match KeyBindings::delete_confirm_action(code) {
-            DeleteConfirmAction::Confirm => self.confirm_delete(),
-            DeleteConfirmAction::Cancel => self.state = AppState::Browsing,
-            DeleteConfirmAction::None => {}
-        }
-        false
-    }
-
-    fn handle_cleaning_confirm_key(&mut self, code: crossterm::event::KeyCode) -> bool {
-        match KeyBindings::delete_confirm_action(code) {
-            DeleteConfirmAction::Confirm => self.execute_cleaning(),
-            DeleteConfirmAction::Cancel => self.cancel_cleaning(),
+            DeleteConfirmAction::ConfirmTrash => {
+                self.deletion_mode = DeletionMode::Trash;
+                self.execute_deletion();
+            }
+            DeleteConfirmAction::ConfirmPermanent => {
+                self.deletion_mode = DeletionMode::Permanent;
+                self.execute_deletion();
+            }
+            DeleteConfirmAction::Cancel => {
+                self.pending_clean_items.clear();
+                self.pending_clean_size = 0;
+                self.state = AppState::Browsing;
+            }
             DeleteConfirmAction::None => {}
         }
         false
@@ -768,13 +765,10 @@ impl App {
             AnalysisAction::PageDown => self.analysis_page_down(max_items),
             AnalysisAction::GoToTop => self.analysis_go_to_top(),
             AnalysisAction::GoToBottom => self.analysis_go_to_bottom(max_items),
-            AnalysisAction::ToggleDeletionMode => self.toggle_deletion_mode(),
             AnalysisAction::Select | AnalysisAction::ToggleMark => {
                 // Mark selected item for cleaning
-                self.clean_analysis_selected();
             }
-            AnalysisAction::CleanSelected => self.clean_analysis_selected(),
-            AnalysisAction::CleanAll => self.prepare_clean_all_junk(),
+            AnalysisAction::Delete => self.request_analysis_delete(),
             AnalysisAction::None => {}
         }
         false
@@ -888,9 +882,40 @@ impl App {
     // ===== Cleaning Utility Methods =====
 
     /// Toggle deletion mode between Trash and Permanent
-    pub fn toggle_deletion_mode(&mut self) {
-        self.deletion_mode = self.deletion_mode.toggle();
-        self.status_msg = format!("Deletion mode: {}", self.deletion_mode.label());
+    /// Request deletion from analysis view - sets up pending items and shows confirmation
+    pub fn request_analysis_delete(&mut self) {
+        // Get the selected item from the current analysis view
+        let item: Option<(PathBuf, u64)> = match self.state {
+            AppState::LargeFilesView => {
+                self.large_files.as_ref().and_then(|files| {
+                    files.get(self.analysis_selected).map(|f| (f.path.clone(), f.size))
+                })
+            }
+            AppState::CacheView => {
+                self.system_caches.as_ref().and_then(|caches| {
+                    caches.get(self.analysis_selected).map(|c| {
+                        let size = c.size.unwrap_or(0);
+                        (c.path.clone(), size)
+                    })
+                })
+            }
+            AppState::DuplicateAnalysis => {
+                self.duplicate_result.as_ref().and_then(|result| {
+                    result.groups.get(self.analysis_selected).and_then(|g| {
+                        g.files.get(1).map(|path| (path.clone(), g.size))
+                    })
+                })
+            }
+            _ => None,
+        };
+
+        if let Some((path, size)) = item {
+            self.pending_clean_items = vec![(path, size)];
+            self.pending_clean_size = size;
+            self.state = AppState::DeleteConfirm;
+        } else {
+            self.status_msg = "No item selected".to_string();
+        }
     }
 
     /// Compute junk statistics (lazy)

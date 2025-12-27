@@ -82,9 +82,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         AppState::CacheView => {
             render_analysis_overlay(f, app, "System Caches", cache_view_content(app));
         }
-        AppState::CleaningConfirm => {
-            popups::render_cleaning_popup(f, app);
-        }
         AppState::Browsing => {}
     }
 }
@@ -292,19 +289,14 @@ fn render_analysis_overlay(f: &mut Frame, app: &App, title: &str, content: Vec<L
 
     f.render_widget(Clear, area);
 
-    let mode_indicator = match app.deletion_mode {
-        crate::config::DeletionMode::Trash => " [Trash]",
-        crate::config::DeletionMode::Permanent => " [PERMANENT]",
-    };
-
     let popup = Paragraph::new(content)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(styles::accent())
-                .title(format!(" {} {} ", title, mode_indicator))
+                .title(format!(" {} ", title))
                 .title_style(styles::accent())
-                .title_bottom(" q: Close | !: Toggle Mode | c: Clean Selected ")
+                .title_bottom(" q: Close | Space: Mark | d: Delete ")
                 .title_alignment(Alignment::Center),
         )
         .scroll((app.analysis_scroll as u16, 0));

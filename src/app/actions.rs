@@ -148,47 +148,76 @@ impl App {
     // DELETION
     // ==========================================
 
+    /// Request deletion - checks for marked items, otherwise uses current selection
     pub fn request_delete(&mut self) {
-        if self.table_state.selected().is_some() {
+        // Check if there are marked items
+        if !self.marked_items.is_empty() {
+            // Build items with sizes from marked paths
+            let mut items: Vec<(PathBuf, u64)> = Vec::new();
+            let mut total_size = 0u64;
+
+            for path in &self.marked_items {
+                // Try to find size from our tree first (fast)
+                let size = self.find_entry_size(path).unwrap_or_else(|| {
+                    // Fall back to filesystem lookup (slower)
+                    if let Ok(metadata) = std::fs::metadata(path) {
+                        if metadata.is_dir() {
+                            self.get_dir_size(path)
+                        } else {
+                            metadata.len()
+                        }
+                    } else {
+                        0
+                    }
+                });
+                total_size += size;
+                items.push((path.clone(), size));
+            }
+
+            self.pending_clean_items = items;
+            self.pending_clean_size = total_size;
+            self.state = AppState::DeleteConfirm;
+        } else {
+            // No marked items, use current selection
+            let Some(visible_idx) = self.table_state.selected() else {
+                return;
+            };
+
+            let Some(actual_idx) = self.visible_to_actual_index(visible_idx) else {
+                return;
+            };
+
+            let (path, size) = {
+                let view = self.current_view();
+                let item = &view.children[actual_idx];
+                (item.path.clone(), item.size)
+            };
+
+            self.pending_clean_items = vec![(path, size)];
+            self.pending_clean_size = size;
             self.state = AppState::DeleteConfirm;
         }
     }
 
-    pub fn confirm_delete(&mut self) {
-        let Some(visible_idx) = self.table_state.selected() else {
+    /// Execute the pending deletion - called after user confirms with y or Y
+    pub fn execute_deletion(&mut self) {
+        if self.pending_clean_items.is_empty() {
             self.state = AppState::Browsing;
             return;
-        };
-
-        // Map visible index to actual index
-        let Some(actual_idx) = self.visible_to_actual_index(visible_idx) else {
-            self.state = AppState::Browsing;
-            return;
-        };
-
-        // Get item info
-        let (path, size) = {
-            let view = self.current_view();
-            let item = &view.children[actual_idx];
-            (item.path.clone(), item.size)
-        };
-
-        // Use the same deletion progress system as batch cleaning
-        self.pending_clean_items = vec![(path, size)];
-        self.pending_clean_size = size;
+        }
 
         // Initialize deletion progress
         self.deletion_progress = Some(super::state::DeletionProgress {
-            total_items: 1,
+            total_items: self.pending_clean_items.len(),
             completed_items: 0,
-            total_bytes: size,
+            total_bytes: self.pending_clean_size,
             freed_bytes: 0,
             current_path: String::new(),
             failed_items: 0,
             started_at: std::time::Instant::now(),
         });
 
-        // Switch to deleting state
+        // Switch to deleting state - actual deletion happens in run_with_deleting
         self.state = AppState::Deleting;
     }
 
@@ -396,83 +425,6 @@ impl App {
         self.state = AppState::Browsing;
     }
 
-    // ==========================================
-    // CLEANING
-    // ==========================================
-
-    /// Prepare to clean marked items - shows confirmation
-    pub fn prepare_clean_marked(&mut self) {
-        if self.marked_items.is_empty() {
-            self.status_msg = "No items marked for cleaning".to_string();
-            return;
-        }
-
-        // Build items with sizes from marked paths
-        let mut items: Vec<(PathBuf, u64)> = Vec::new();
-        let mut total_size = 0u64;
-
-        for path in &self.marked_items {
-            // Try to find size from our tree first (fast)
-            let size = self.find_entry_size(path).unwrap_or_else(|| {
-                // Fall back to filesystem lookup (slower)
-                if let Ok(metadata) = std::fs::metadata(path) {
-                    if metadata.is_dir() {
-                        self.get_dir_size(path)
-                    } else {
-                        metadata.len()
-                    }
-                } else {
-                    0
-                }
-            });
-            total_size += size;
-            items.push((path.clone(), size));
-        }
-
-        self.pending_clean_items = items;
-        self.pending_clean_size = total_size;
-        self.state = AppState::CleaningConfirm;
-    }
-
-    /// Prepare to clean all junk items - shows confirmation
-    pub fn prepare_clean_all_junk(&mut self) {
-        let junk_entries = self.root.collect_junk();
-
-        if junk_entries.is_empty() {
-            self.status_msg = "No junk detected to clean".to_string();
-            return;
-        }
-
-        // Build items with sizes from entries (already have sizes)
-        let items: Vec<_> = junk_entries.iter().map(|e| (e.path.clone(), e.size)).collect();
-        let total_size: u64 = junk_entries.iter().map(|e| e.size).sum();
-
-        self.pending_clean_items = items;
-        self.pending_clean_size = total_size;
-        self.state = AppState::CleaningConfirm;
-    }
-
-    /// Execute the pending cleaning operation - starts deletion with progress
-    pub fn execute_cleaning(&mut self) {
-        if self.pending_clean_items.is_empty() {
-            self.state = AppState::Browsing;
-            return;
-        }
-
-        // Initialize deletion progress
-        self.deletion_progress = Some(super::state::DeletionProgress {
-            total_items: self.pending_clean_items.len(),
-            completed_items: 0,
-            total_bytes: self.pending_clean_size,
-            freed_bytes: 0,
-            current_path: String::new(),
-            failed_items: 0,
-            started_at: std::time::Instant::now(),
-        });
-
-        // Switch to deleting state - actual deletion happens in run_with_deleting
-        self.state = AppState::Deleting;
-    }
 
     /// Finish the deletion process and update state
     pub fn finish_deletion(&mut self, result: crate::cleaner::CleaningResult) {
@@ -546,14 +498,6 @@ impl App {
         timing!("finish_deletion complete");
     }
 
-    /// Cancel the pending cleaning operation
-    pub fn cancel_cleaning(&mut self) {
-        self.pending_clean_items.clear();
-        self.pending_clean_size = 0;
-        self.state = AppState::Browsing;
-        self.status_msg = "Cleaning cancelled".to_string();
-    }
-
     /// Find entry size from the tree by path
     fn find_entry_size(&self, path: &PathBuf) -> Option<u64> {
         fn search_entry(entry: &crate::scanner::Entry, path: &PathBuf) -> Option<u64> {
@@ -600,16 +544,6 @@ impl App {
         self.root.size = self.root.children.iter().map(|c| c.size).sum();
     }
 
-    /// Remove entries that no longer exist from the tree (slow - checks filesystem)
-    #[allow(dead_code)]
-    fn remove_deleted_entries(&mut self) {
-        remove_deleted_from_children(&mut self.root.children);
-        // Update root counts
-        self.root.file_count = self.root.children.iter().map(|c| c.file_count + if c.is_dir { 0 } else { 1 }).sum();
-        self.root.dir_count = self.root.children.iter().map(|c| c.dir_count + if c.is_dir { 1 } else { 0 }).sum();
-        self.root.size = self.root.children.iter().map(|c| c.size).sum();
-    }
-
     /// Get directory size (helper)
     fn get_dir_size(&self, path: &std::path::Path) -> u64 {
         let mut size = 0;
@@ -624,58 +558,5 @@ impl App {
             }
         }
         size
-    }
-
-    /// Clean selected item from analysis view
-    pub fn clean_analysis_selected(&mut self) {
-        let item: Option<(PathBuf, u64)> = match self.state {
-            AppState::LargeFilesView => {
-                self.large_files.as_ref().and_then(|files| {
-                    files.get(self.analysis_selected).map(|f| (f.path.clone(), f.size))
-                })
-            }
-            AppState::CacheView => {
-                self.system_caches.as_ref().and_then(|caches| {
-                    caches.get(self.analysis_selected).map(|c| {
-                        let size = c.size.unwrap_or(0);
-                        (c.path.clone(), size)
-                    })
-                })
-            }
-            AppState::DuplicateAnalysis => {
-                // For duplicates, get the first duplicate (not original) from selected group
-                self.duplicate_result.as_ref().and_then(|result| {
-                    result.groups.get(self.analysis_selected).and_then(|g| {
-                        g.files.get(1).map(|path| (path.clone(), g.size))
-                    })
-                })
-            }
-            _ => None,
-        };
-
-        if let Some((path, size)) = item {
-            self.pending_clean_items = vec![(path, size)];
-            self.pending_clean_size = size;
-            self.state = AppState::CleaningConfirm;
-        } else {
-            self.status_msg = "No item selected".to_string();
-        }
-    }
-}
-
-/// Recursively remove entries that no longer exist from children
-fn remove_deleted_from_children(children: &mut Vec<crate::scanner::Entry>) {
-    // Remove entries that no longer exist
-    children.retain(|entry| entry.path.exists());
-
-    // Recursively process remaining directories
-    for child in children.iter_mut() {
-        if child.is_dir {
-            remove_deleted_from_children(&mut child.children);
-            // Update counts
-            child.file_count = child.children.iter().map(|c| c.file_count + if c.is_dir { 0 } else { 1 }).sum();
-            child.dir_count = child.children.iter().map(|c| c.dir_count + if c.is_dir { 1 } else { 0 }).sum();
-            child.size = child.children.iter().map(|c| c.size).sum();
-        }
     }
 }

@@ -40,9 +40,6 @@ pub enum Action {
     ShowOldFiles,
     ShowLargeFiles,
     ShowCaches,
-    CleanSelected,
-    CleanAllJunk,
-    ToggleDeletionMode,
 
     // No action
     None,
@@ -112,11 +109,6 @@ impl KeyBindings {
             KeyCode::Char('L') => Action::ShowLargeFiles,
             KeyCode::Char('K') => Action::ShowCaches,
 
-            // Cleaning actions
-            KeyCode::Char('c') => Action::CleanSelected,
-            KeyCode::Char('C') => Action::CleanAllJunk,
-            KeyCode::Char('!') => Action::ToggleDeletionMode,
-
             _ => Action::None,
         }
     }
@@ -124,7 +116,8 @@ impl KeyBindings {
     /// Map a key press in delete confirmation mode
     pub fn delete_confirm_action(code: KeyCode) -> DeleteConfirmAction {
         match code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => DeleteConfirmAction::Confirm,
+            KeyCode::Char('y') => DeleteConfirmAction::ConfirmTrash,
+            KeyCode::Char('Y') => DeleteConfirmAction::ConfirmPermanent,
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Char('q') => {
                 DeleteConfirmAction::Cancel
             }
@@ -171,7 +164,8 @@ impl KeyBindings {
 /// Actions for delete confirmation dialog
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteConfirmAction {
-    Confirm,
+    ConfirmTrash,     // y - move to trash (safe)
+    ConfirmPermanent, // Y - delete permanently
     Cancel,
     None,
 }
@@ -218,9 +212,7 @@ pub enum AnalysisAction {
     GoToBottom,
     Select,
     ToggleMark,
-    CleanSelected,
-    CleanAll,
-    ToggleDeletionMode,
+    Delete, // d - delete selected item (goes to confirmation)
     None,
 }
 
@@ -237,9 +229,7 @@ impl KeyBindings {
             KeyCode::End | KeyCode::Char('G') => AnalysisAction::GoToBottom,
             KeyCode::Enter => AnalysisAction::Select,
             KeyCode::Char(' ') => AnalysisAction::ToggleMark,
-            KeyCode::Char('c') => AnalysisAction::CleanSelected,
-            KeyCode::Char('C') => AnalysisAction::CleanAll,
-            KeyCode::Char('!') => AnalysisAction::ToggleDeletionMode,
+            KeyCode::Char('d') | KeyCode::Delete => AnalysisAction::Delete,
             _ => AnalysisAction::None,
         }
     }
