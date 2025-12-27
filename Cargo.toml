@@ -1,12 +1,14 @@
 [package]
 name = "vidu"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 anyhow = "1.0.100"
 bincode = { version = "2.0.1", features = ["serde"] }
-crossterm = "0.29.0"
+chrono = "0.4.42"
+clap = { version = "4.5.53", features = ["derive"] }
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 directories = "6.0.0"
 humansize = "2.1.3"
 lz4_flex = "0.12.0"
@@ -15,3 +17,11 @@ ratatui = "0.29.0"
 rayon = "1.11.0"
 serde = { version = "1.0.228", features = ["derive"] }
 sysinfo = "0.37.2"
+textwrap = "0.16.2"
+thiserror = "2.0.17"
+tokio = { version = "1.48.0", features = ["full"] }
+tokio-util = "0.7.17"
+unicode-width = "0.2.0"
+
+[dev-dependencies]
+tempfile = "3.24.0"
