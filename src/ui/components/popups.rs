@@ -8,16 +8,12 @@ use ratatui::{prelude::*, widgets::*};
 /// Render delete confirmation popup
 pub fn render_delete_popup(f: &mut Frame, app: &App) {
     let area = centered_rect(60, 40, f.area());
-    
+
     // Clear background
     f.render_widget(Clear, area);
-    
-    let Some(idx) = app.table_state.selected() else {
-        return;
-    };
-    
-    let current = app.current_view();
-    let Some(item) = current.children.get(idx) else {
+
+    // Get the selected item using visible-to-actual mapping
+    let Some(item) = app.selected_item() else {
         return;
     };
     

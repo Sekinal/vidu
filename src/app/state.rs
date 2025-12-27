@@ -590,12 +590,44 @@ impl App {
         current
     }
 
-    /// Get selected item in current view
+    /// Get visible children (respects show_hidden setting)
+    pub fn visible_children(&self) -> Vec<&Entry> {
+        self.current_view()
+            .children
+            .iter()
+            .filter(|e| self.show_hidden || !e.hidden)
+            .collect()
+    }
+
+    /// Get visible children count
+    pub fn visible_children_count(&self) -> usize {
+        self.current_view()
+            .children
+            .iter()
+            .filter(|e| self.show_hidden || !e.hidden)
+            .count()
+    }
+
+    /// Map visible index to actual index in children array
+    pub fn visible_to_actual_index(&self, visible_idx: usize) -> Option<usize> {
+        let children = &self.current_view().children;
+        let mut visible_count = 0;
+        for (actual_idx, child) in children.iter().enumerate() {
+            if self.show_hidden || !child.hidden {
+                if visible_count == visible_idx {
+                    return Some(actual_idx);
+                }
+                visible_count += 1;
+            }
+        }
+        None
+    }
+
+    /// Get selected item in current view (respects show_hidden)
     pub fn selected_item(&self) -> Option<&Entry> {
-        let view = self.current_view();
-        self.table_state
-            .selected()
-            .and_then(|idx| view.children.get(idx))
+        let visible_idx = self.table_state.selected()?;
+        let actual_idx = self.visible_to_actual_index(visible_idx)?;
+        self.current_view().children.get(actual_idx)
     }
 
     /// Get breadcrumb path segments

@@ -20,21 +20,21 @@ impl App {
     }
 
     pub fn move_down(&mut self) {
-        let current = self.current_view();
+        let visible_count = self.visible_children_count();
         let selected = self.table_state.selected().unwrap_or(0);
-        if selected < current.children.len().saturating_sub(1) {
+        if selected < visible_count.saturating_sub(1) {
             self.table_state.select(Some(selected + 1));
         }
     }
 
     pub fn go_to_top(&mut self) {
-        if !self.current_view().children.is_empty() {
+        if self.visible_children_count() > 0 {
             self.table_state.select(Some(0));
         }
     }
 
     pub fn go_to_bottom(&mut self) {
-        let len = self.current_view().children.len();
+        let len = self.visible_children_count();
         if len > 0 {
             self.table_state.select(Some(len - 1));
         }
@@ -47,24 +47,25 @@ impl App {
     }
 
     pub fn page_down(&mut self) {
-        let current = self.current_view();
+        let visible_count = self.visible_children_count();
         let selected = self.table_state.selected().unwrap_or(0);
         let jump = self.visible_rows();
-        let new_pos = (selected + jump).min(current.children.len().saturating_sub(1));
+        let new_pos = (selected + jump).min(visible_count.saturating_sub(1));
         self.table_state.select(Some(new_pos));
     }
 
     pub fn enter_dir(&mut self) {
-        let Some(selected) = self.table_state.selected() else {
+        let Some(visible_idx) = self.table_state.selected() else {
+            return;
+        };
+
+        // Map visible index to actual index
+        let Some(actual_idx) = self.visible_to_actual_index(visible_idx) else {
             return;
         };
 
         let current = self.current_view();
-        if selected >= current.children.len() {
-            return;
-        }
-
-        let child = &current.children[selected];
+        let child = &current.children[actual_idx];
         if !child.is_dir {
             // If it's a file, try to preview it
             self.toggle_preview();
@@ -77,15 +78,22 @@ impl App {
             return;
         }
 
-        self.nav_stack.push(selected);
+        // Push actual index to nav_stack (not visible index)
+        self.nav_stack.push(actual_idx);
         self.table_state.select(Some(0));
         self.apply_sort();
     }
 
     pub fn go_back(&mut self) {
         if !self.nav_stack.is_empty() {
-            let prev_idx = self.nav_stack.pop().unwrap();
-            self.table_state.select(Some(prev_idx));
+            let _actual_idx = self.nav_stack.pop().unwrap();
+            // Clamp selection to visible range (the item we came from might be hidden now)
+            let visible_count = self.visible_children_count();
+            if visible_count > 0 {
+                self.table_state.select(Some(0));
+            } else {
+                self.table_state.select(None);
+            }
         }
     }
 
@@ -142,7 +150,13 @@ impl App {
     }
 
     pub fn confirm_delete(&mut self) {
-        let Some(selected) = self.table_state.selected() else {
+        let Some(visible_idx) = self.table_state.selected() else {
+            self.state = AppState::Browsing;
+            return;
+        };
+
+        // Map visible index to actual index
+        let Some(actual_idx) = self.visible_to_actual_index(visible_idx) else {
             self.state = AppState::Browsing;
             return;
         };
@@ -150,11 +164,7 @@ impl App {
         // Get item info
         let (path, is_dir, size, file_count) = {
             let view = self.current_view();
-            if selected >= view.children.len() {
-                self.state = AppState::Browsing;
-                return;
-            }
-            let item = &view.children[selected];
+            let item = &view.children[actual_idx];
             (item.path.clone(), item.is_dir, item.size, item.file_count)
         };
 
@@ -167,22 +177,21 @@ impl App {
 
         match result {
             Ok(()) => {
-                let new_len;
                 {
                     let current = self.current_view_mut();
-                    current.children.remove(selected);
+                    current.children.remove(actual_idx);
                     current.size = current.size.saturating_sub(size);
                     current.file_count = current.file_count.saturating_sub(file_count);
-                    new_len = current.children.len();
                 }
 
                 // Update disk available space (approximate)
                 self.disk_available = self.disk_available.saturating_add(size);
 
-                // Adjust selection
-                if selected >= new_len && new_len > 0 {
-                    self.table_state.select(Some(new_len - 1));
-                } else if new_len == 0 {
+                // Adjust selection to visible items
+                let new_visible_len = self.visible_children_count();
+                if visible_idx >= new_visible_len && new_visible_len > 0 {
+                    self.table_state.select(Some(new_visible_len - 1));
+                } else if new_visible_len == 0 {
                     self.table_state.select(None);
                 }
 
@@ -339,7 +348,17 @@ impl App {
             "Hidden files: {}",
             if self.show_hidden { "shown" } else { "hidden" }
         );
-        self.refresh_current();
+        // Clamp selection to visible range after toggling
+        let visible_count = self.visible_children_count();
+        if let Some(selected) = self.table_state.selected() {
+            if selected >= visible_count {
+                if visible_count > 0 {
+                    self.table_state.select(Some(visible_count - 1));
+                } else {
+                    self.table_state.select(None);
+                }
+            }
+        }
     }
 
     pub fn toggle_mark(&mut self) {

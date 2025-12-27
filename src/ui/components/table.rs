@@ -13,9 +13,16 @@ pub fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
         let current = app.current_view();
         let parent_size = current.size as f64;
         let marked_items = &app.marked_items;
-        
-        let rows: Vec<Row> = current
+        let show_hidden = app.show_hidden;
+
+        // Filter out hidden files for display if show_hidden is false
+        let visible_children: Vec<_> = current
             .children
+            .iter()
+            .filter(|item| show_hidden || !item.hidden)
+            .collect();
+
+        let rows: Vec<Row> = visible_children
             .iter()
             .enumerate()
             .map(|(_idx, item)| {
@@ -98,7 +105,7 @@ pub fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
             })
             .collect();
 
-        (rows, current.children.len(), app.table_state.selected().unwrap_or(0))
+        (rows, visible_children.len(), app.table_state.selected().unwrap_or(0))
     };
     
     // Column widths

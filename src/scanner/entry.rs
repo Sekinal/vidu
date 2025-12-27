@@ -216,6 +216,10 @@ pub struct Entry {
     /// Error message if access was denied or other error occurred
     #[serde(skip)]
     pub error: Option<String>,
+
+    /// Whether this is a hidden file/directory (starts with .)
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 impl Default for Entry {
@@ -235,6 +239,7 @@ impl Default for Entry {
             content_hash: None,
             duplicate_group: None,
             error: None,
+            hidden: false,
         }
     }
 }

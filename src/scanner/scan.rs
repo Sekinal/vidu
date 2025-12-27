@@ -152,6 +152,9 @@ fn scan_internal(
 
     let mut entry = Entry::new(path.clone(), name.clone());
 
+    // Mark hidden files/directories
+    entry.hidden = name.starts_with('.');
+
     let meta = match metadata {
         Ok(m) => m,
         Err(e) => {
@@ -187,16 +190,12 @@ fn scan_internal(
             }
         }
 
-        // Read directory entries
+        // Read directory entries (always scan all files for accurate size calculation)
         let entries: Vec<_> = match fs::read_dir(&path) {
             Ok(rd) => rd
                 .filter_map(|r| r.ok())
                 .filter(|e| {
-                    // Filter hidden files
-                    if !options.show_hidden && e.file_name().to_string_lossy().starts_with('.') {
-                        return false;
-                    }
-                    // Filter virtual filesystems
+                    // Filter virtual filesystems (these don't represent real disk usage)
                     if options.skip_virtual && is_virtual_filesystem(&e.path()) {
                         return false;
                     }
@@ -314,15 +313,17 @@ mod tests {
         File::create(dir.path().join(".hidden")).unwrap();
         File::create(dir.path().join("visible")).unwrap();
 
-        // Without hidden
+        // All files are always scanned for accurate size calculation
         let options = ScanOptions::default();
         let entry = scan(dir.path().to_path_buf(), &options);
-        assert_eq!(entry.children.len(), 1);
+        assert_eq!(entry.children.len(), 2); // Both files are scanned
 
-        // With hidden
-        let options = ScanOptions::default().with_hidden(true);
-        let entry = scan(dir.path().to_path_buf(), &options);
-        assert_eq!(entry.children.len(), 2);
+        // Verify hidden flag is set correctly
+        let hidden_file = entry.children.iter().find(|e| e.name == ".hidden").unwrap();
+        assert!(hidden_file.hidden, "Hidden file should have hidden=true");
+
+        let visible_file = entry.children.iter().find(|e| e.name == "visible").unwrap();
+        assert!(!visible_file.hidden, "Visible file should have hidden=false");
     }
 
     #[test]
