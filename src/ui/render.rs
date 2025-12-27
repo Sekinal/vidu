@@ -69,7 +69,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             render_analysis_overlay(f, app, "System Caches", cache_view_content(app));
         }
         AppState::CleaningConfirm => {
-            popups::render_delete_popup(f, app); // Reuse delete popup for now
+            popups::render_cleaning_popup(f, app);
         }
         AppState::Browsing => {}
     }

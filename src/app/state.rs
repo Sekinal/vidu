@@ -154,6 +154,11 @@ pub struct App {
     // Analysis view state
     pub analysis_scroll: usize,
     pub analysis_selected: usize,
+
+    // Cleaning state
+    pub pending_clean_paths: Vec<PathBuf>,
+    pub pending_clean_size: u64,
+    pub last_clean_result: Option<crate::cleaner::CleaningResult>,
 }
 
 impl App {
@@ -222,6 +227,9 @@ impl App {
             system_caches: None,
             analysis_scroll: 0,
             analysis_selected: 0,
+            pending_clean_paths: Vec::new(),
+            pending_clean_size: 0,
+            last_clean_result: None,
         };
 
         // Select first item if available (for cached entries)
@@ -398,7 +406,7 @@ impl App {
             | AppState::AgeAnalysis
             | AppState::LargeFilesView
             | AppState::CacheView => self.handle_analysis_key(code),
-            AppState::CleaningConfirm => self.handle_delete_confirm_key(code),
+            AppState::CleaningConfirm => self.handle_cleaning_confirm_key(code),
         }
     }
 
@@ -445,9 +453,8 @@ impl App {
             Action::ShowOldFiles => self.show_old_files(),
             Action::ShowLargeFiles => self.show_large_files(),
             Action::ShowCaches => self.show_caches(),
-            Action::CleanSelected | Action::CleanAllJunk => {
-                self.status_msg = "Cleaning not yet implemented".to_string();
-            }
+            Action::CleanSelected => self.prepare_clean_marked(),
+            Action::CleanAllJunk => self.prepare_clean_all_junk(),
             Action::ToggleDeletionMode => self.toggle_deletion_mode(),
             Action::None => {}
         }
@@ -459,6 +466,15 @@ impl App {
         match KeyBindings::delete_confirm_action(code) {
             DeleteConfirmAction::Confirm => self.confirm_delete(),
             DeleteConfirmAction::Cancel => self.state = AppState::Browsing,
+            DeleteConfirmAction::None => {}
+        }
+        false
+    }
+
+    fn handle_cleaning_confirm_key(&mut self, code: crossterm::event::KeyCode) -> bool {
+        match KeyBindings::delete_confirm_action(code) {
+            DeleteConfirmAction::Confirm => self.execute_cleaning(),
+            DeleteConfirmAction::Cancel => self.cancel_cleaning(),
             DeleteConfirmAction::None => {}
         }
         false
@@ -544,11 +560,11 @@ impl App {
             AnalysisAction::GoToBottom => self.analysis_go_to_bottom(max_items),
             AnalysisAction::ToggleDeletionMode => self.toggle_deletion_mode(),
             AnalysisAction::Select | AnalysisAction::ToggleMark => {
-                self.status_msg = "Selection not yet implemented".to_string();
+                // Mark selected item for cleaning
+                self.clean_analysis_selected();
             }
-            AnalysisAction::CleanSelected | AnalysisAction::CleanAll => {
-                self.status_msg = "Cleaning not yet implemented".to_string();
-            }
+            AnalysisAction::CleanSelected => self.clean_analysis_selected(),
+            AnalysisAction::CleanAll => self.prepare_clean_all_junk(),
             AnalysisAction::None => {}
         }
         false

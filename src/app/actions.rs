@@ -396,4 +396,197 @@ impl App {
     pub fn close_analysis(&mut self) {
         self.state = AppState::Browsing;
     }
+
+    // ==========================================
+    // CLEANING
+    // ==========================================
+
+    /// Prepare to clean marked items - shows confirmation
+    pub fn prepare_clean_marked(&mut self) {
+        if self.marked_items.is_empty() {
+            self.status_msg = "No items marked for cleaning".to_string();
+            return;
+        }
+
+        // Calculate total size of marked items
+        let mut total_size = 0u64;
+        let paths: Vec<_> = self.marked_items.iter().cloned().collect();
+
+        for path in &paths {
+            if let Ok(metadata) = std::fs::metadata(path) {
+                if metadata.is_dir() {
+                    total_size += self.get_dir_size(path);
+                } else {
+                    total_size += metadata.len();
+                }
+            }
+        }
+
+        self.pending_clean_paths = paths;
+        self.pending_clean_size = total_size;
+        self.state = AppState::CleaningConfirm;
+    }
+
+    /// Prepare to clean all junk items - shows confirmation
+    pub fn prepare_clean_all_junk(&mut self) {
+        let junk_entries = self.root.collect_junk();
+
+        if junk_entries.is_empty() {
+            self.status_msg = "No junk detected to clean".to_string();
+            return;
+        }
+
+        let paths: Vec<_> = junk_entries.iter().map(|e| e.path.clone()).collect();
+        let total_size: u64 = junk_entries.iter().map(|e| e.size).sum();
+
+        self.pending_clean_paths = paths;
+        self.pending_clean_size = total_size;
+        self.state = AppState::CleaningConfirm;
+    }
+
+    /// Execute the pending cleaning operation
+    pub fn execute_cleaning(&mut self) {
+        use crate::cleaner::BatchCleaner;
+
+        if self.pending_clean_paths.is_empty() {
+            self.state = AppState::Browsing;
+            return;
+        }
+
+        let mut cleaner = BatchCleaner::new(self.deletion_mode);
+        for path in &self.pending_clean_paths {
+            cleaner.add_path(path.clone());
+        }
+
+        // Execute the cleaning
+        let result = cleaner.execute();
+
+        // Update disk available space
+        self.disk_available = self.disk_available.saturating_add(result.bytes_freed);
+
+        // Clear marked items that were successfully deleted
+        for path in &self.pending_clean_paths {
+            if !path.exists() {
+                self.marked_items.remove(path);
+            }
+        }
+
+        // Remove deleted entries from the tree
+        self.remove_deleted_entries();
+
+        // Invalidate analysis caches
+        self.invalidate_analysis();
+
+        // Store result and show summary
+        let deleted = result.deleted_count;
+        let freed = result.bytes_freed;
+        let failed = result.failed_count;
+
+        self.last_clean_result = Some(result);
+        self.pending_clean_paths.clear();
+        self.pending_clean_size = 0;
+
+        if failed == 0 {
+            self.status_msg = format!(
+                "Cleaned {} items, freed {}",
+                deleted,
+                crate::utils::format_bytes(freed)
+            );
+        } else {
+            self.status_msg = format!(
+                "Cleaned {} items, {} failed, freed {}",
+                deleted,
+                failed,
+                crate::utils::format_bytes(freed)
+            );
+            self.error_msg = Some(format!("{} items failed to delete", failed));
+        }
+
+        // Save cache and return to browsing
+        self.save_to_cache();
+        self.state = AppState::Browsing;
+    }
+
+    /// Cancel the pending cleaning operation
+    pub fn cancel_cleaning(&mut self) {
+        self.pending_clean_paths.clear();
+        self.pending_clean_size = 0;
+        self.state = AppState::Browsing;
+        self.status_msg = "Cleaning cancelled".to_string();
+    }
+
+    /// Remove entries that no longer exist from the tree
+    fn remove_deleted_entries(&mut self) {
+        remove_deleted_from_children(&mut self.root.children);
+        // Update root counts
+        self.root.file_count = self.root.children.iter().map(|c| c.file_count + if c.is_dir { 0 } else { 1 }).sum();
+        self.root.dir_count = self.root.children.iter().map(|c| c.dir_count + if c.is_dir { 1 } else { 0 }).sum();
+        self.root.size = self.root.children.iter().map(|c| c.size).sum();
+    }
+
+    /// Get directory size (helper)
+    fn get_dir_size(&self, path: &std::path::Path) -> u64 {
+        let mut size = 0;
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.is_file() {
+                    size += path.metadata().map(|m| m.len()).unwrap_or(0);
+                } else if path.is_dir() {
+                    size += self.get_dir_size(&path);
+                }
+            }
+        }
+        size
+    }
+
+    /// Clean selected item from analysis view
+    pub fn clean_analysis_selected(&mut self) {
+        let path = match self.state {
+            AppState::LargeFilesView => {
+                self.large_files.as_ref().and_then(|files| {
+                    files.get(self.analysis_selected).map(|f| f.path.clone())
+                })
+            }
+            AppState::CacheView => {
+                self.system_caches.as_ref().and_then(|caches| {
+                    caches.get(self.analysis_selected).map(|c| c.path.clone())
+                })
+            }
+            AppState::DuplicateAnalysis => {
+                // For duplicates, get the first duplicate (not original) from selected group
+                self.duplicate_result.as_ref().and_then(|result| {
+                    result.groups.get(self.analysis_selected).and_then(|g| {
+                        g.files.get(1).cloned() // Skip first (original), get first duplicate
+                    })
+                })
+            }
+            _ => None,
+        };
+
+        if let Some(p) = path {
+            self.pending_clean_paths = vec![p.clone()];
+            self.pending_clean_size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            self.state = AppState::CleaningConfirm;
+        } else {
+            self.status_msg = "No item selected".to_string();
+        }
+    }
+}
+
+/// Recursively remove entries that no longer exist from children
+fn remove_deleted_from_children(children: &mut Vec<crate::scanner::Entry>) {
+    // Remove entries that no longer exist
+    children.retain(|entry| entry.path.exists());
+
+    // Recursively process remaining directories
+    for child in children.iter_mut() {
+        if child.is_dir {
+            remove_deleted_from_children(&mut child.children);
+            // Update counts
+            child.file_count = child.children.iter().map(|c| c.file_count + if c.is_dir { 0 } else { 1 }).sum();
+            child.dir_count = child.children.iter().map(|c| c.dir_count + if c.is_dir { 1 } else { 0 }).sum();
+            child.size = child.children.iter().map(|c| c.size).sum();
+        }
+    }
 }
