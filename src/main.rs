@@ -50,6 +50,10 @@ struct Args {
     #[arg(short, long)]
     fresh: bool,
 
+    /// Clear the cache and exit
+    #[arg(long)]
+    clear_cache: bool,
+
     /// Hide hidden files (show all files by default)
     #[arg(long)]
     no_hidden: bool,
@@ -76,6 +80,11 @@ fn main() -> ExitCode {
 fn run() -> Result<()> {
     // Parse CLI arguments
     let args = Args::parse();
+
+    // Handle --clear-cache before anything else
+    if args.clear_cache {
+        return clear_cache();
+    }
 
     // Resolve and validate path
     let path = args
@@ -165,6 +174,23 @@ fn run_app(path: PathBuf, force_fresh: bool, show_hidden: bool) -> Result<()> {
     let mut app = App::new(path, force_fresh, show_hidden).context("Failed to initialize app")?;
 
     app.run(&mut terminal).context("App error")?;
+
+    Ok(())
+}
+
+fn clear_cache() -> Result<()> {
+    let cache_dir = dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("vidu");
+
+    if cache_dir.exists() {
+        let entries = std::fs::read_dir(&cache_dir)?;
+        let count = entries.count();
+        std::fs::remove_dir_all(&cache_dir)?;
+        println!("Cleared {} cached entries from {}", count, cache_dir.display());
+    } else {
+        println!("No cache found at {}", cache_dir.display());
+    }
 
     Ok(())
 }
