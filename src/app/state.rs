@@ -3,9 +3,14 @@
 use super::input::{
     Action, DeleteConfirmAction, HelpAction, KeyBindings, PreviewAction, SearchAction,
 };
+use crate::analyzer::{
+    AgeAnalysis, CacheDetector, CacheLocation, DuplicateFinder, DuplicateResult,
+    FileTypeAnalysis, LargeFile, LargeFileFinder,
+};
 use crate::cache::CacheManager;
+use crate::config::DeletionMode;
 use crate::constants::ui::EVENT_POLL_TIMEOUT_MS;
-use crate::scanner::{scan_with_progress, Entry, ScanOptions, ScanProgress};
+use crate::scanner::{scan_with_progress, Entry, JunkType, ScanOptions, ScanProgress};
 use crate::ui;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -22,6 +27,14 @@ pub enum AppState {
     Help,
     Search,
     Scanning,
+    // Cleaning utility states
+    JunkAnalysis,
+    DuplicateAnalysis,
+    FileTypeAnalysis,
+    AgeAnalysis,
+    LargeFilesView,
+    CacheView,
+    CleaningConfirm,
 }
 
 /// What view we're displaying
@@ -126,6 +139,21 @@ pub struct App {
 
     // Cache manager
     cache_manager: Option<CacheManager>,
+
+    // Cleaning utility state
+    pub deletion_mode: DeletionMode,
+
+    // Analysis results (lazy-computed)
+    pub junk_stats: Option<(usize, u64)>,           // (count, size)
+    pub duplicate_result: Option<DuplicateResult>,
+    pub file_type_analysis: Option<FileTypeAnalysis>,
+    pub age_analysis: Option<AgeAnalysis>,
+    pub large_files: Option<Vec<LargeFile>>,
+    pub system_caches: Option<Vec<CacheLocation>>,
+
+    // Analysis view state
+    pub analysis_scroll: usize,
+    pub analysis_selected: usize,
 }
 
 impl App {
@@ -185,6 +213,15 @@ impl App {
             marked_items: HashSet::new(),
             force_fresh,
             cache_manager,
+            deletion_mode: DeletionMode::Trash,
+            junk_stats: None,
+            duplicate_result: None,
+            file_type_analysis: None,
+            age_analysis: None,
+            large_files: None,
+            system_caches: None,
+            analysis_scroll: 0,
+            analysis_selected: 0,
         };
 
         // Select first item if available (for cached entries)
@@ -354,6 +391,14 @@ impl App {
                 // Allow quit during scanning
                 matches!(code, KeyCode::Char('q') | KeyCode::Esc)
             }
+            // Analysis views share common input handling
+            AppState::JunkAnalysis
+            | AppState::DuplicateAnalysis
+            | AppState::FileTypeAnalysis
+            | AppState::AgeAnalysis
+            | AppState::LargeFilesView
+            | AppState::CacheView => self.handle_analysis_key(code),
+            AppState::CleaningConfirm => self.handle_delete_confirm_key(code),
         }
     }
 
@@ -393,6 +438,17 @@ impl App {
                 self.state = AppState::Search;
             }
             Action::ToggleHidden => self.toggle_hidden(),
+            // Cleaning utility actions
+            Action::ShowJunkAnalysis => self.show_junk_analysis(),
+            Action::ShowDuplicates => self.show_duplicates(),
+            Action::ShowFileTypes => self.show_file_types(),
+            Action::ShowOldFiles => self.show_old_files(),
+            Action::ShowLargeFiles => self.show_large_files(),
+            Action::ShowCaches => self.show_caches(),
+            Action::CleanSelected | Action::CleanAllJunk => {
+                self.status_msg = "Cleaning not yet implemented".to_string();
+            }
+            Action::ToggleDeletionMode => self.toggle_deletion_mode(),
             Action::None => {}
         }
 
@@ -461,6 +517,43 @@ impl App {
         false
     }
 
+    fn handle_analysis_key(&mut self, code: crossterm::event::KeyCode) -> bool {
+        use super::input::AnalysisAction;
+
+        // Get the max items for current view
+        let max_items = match self.state {
+            AppState::DuplicateAnalysis => {
+                self.duplicate_result.as_ref().map(|r| r.groups.len()).unwrap_or(0)
+            }
+            AppState::LargeFilesView => {
+                self.large_files.as_ref().map(|f| f.len()).unwrap_or(0)
+            }
+            AppState::CacheView => {
+                self.system_caches.as_ref().map(|c| c.len()).unwrap_or(0)
+            }
+            _ => 0,
+        };
+
+        match KeyBindings::analysis_action(code) {
+            AnalysisAction::Close => self.close_analysis(),
+            AnalysisAction::ScrollUp => self.analysis_scroll_up(),
+            AnalysisAction::ScrollDown => self.analysis_scroll_down(max_items),
+            AnalysisAction::PageUp => self.analysis_page_up(),
+            AnalysisAction::PageDown => self.analysis_page_down(max_items),
+            AnalysisAction::GoToTop => self.analysis_go_to_top(),
+            AnalysisAction::GoToBottom => self.analysis_go_to_bottom(max_items),
+            AnalysisAction::ToggleDeletionMode => self.toggle_deletion_mode(),
+            AnalysisAction::Select | AnalysisAction::ToggleMark => {
+                self.status_msg = "Selection not yet implemented".to_string();
+            }
+            AnalysisAction::CleanSelected | AnalysisAction::CleanAll => {
+                self.status_msg = "Cleaning not yet implemented".to_string();
+            }
+            AnalysisAction::None => {}
+        }
+        false
+    }
+
     /// Get current view entry (the directory we're viewing)
     pub fn current_view(&self) -> &Entry {
         let mut current = &self.root;
@@ -514,5 +607,122 @@ impl App {
         if let Some(ref cm) = self.cache_manager {
             let _ = cm.save(&self.root);
         }
+    }
+
+    // ===== Cleaning Utility Methods =====
+
+    /// Toggle deletion mode between Trash and Permanent
+    pub fn toggle_deletion_mode(&mut self) {
+        self.deletion_mode = self.deletion_mode.toggle();
+        self.status_msg = format!("Deletion mode: {}", self.deletion_mode.label());
+    }
+
+    /// Compute junk statistics (lazy)
+    pub fn compute_junk_stats(&mut self) {
+        if self.junk_stats.is_none() {
+            let stats = self.root.junk_stats();
+            self.junk_stats = Some(stats);
+        }
+    }
+
+    /// Compute duplicate detection (lazy)
+    pub fn compute_duplicates(&mut self) {
+        if self.duplicate_result.is_none() {
+            let finder = DuplicateFinder::new();
+            self.duplicate_result = Some(finder.find_duplicates(&self.root));
+        }
+    }
+
+    /// Compute file type analysis (lazy)
+    pub fn compute_file_types(&mut self) {
+        if self.file_type_analysis.is_none() {
+            self.file_type_analysis = Some(FileTypeAnalysis::from_entry(&self.root));
+        }
+    }
+
+    /// Compute age analysis (lazy)
+    pub fn compute_age_analysis(&mut self) {
+        if self.age_analysis.is_none() {
+            self.age_analysis = Some(AgeAnalysis::from_entry(&self.root));
+        }
+    }
+
+    /// Compute large files list (lazy)
+    pub fn compute_large_files(&mut self) {
+        if self.large_files.is_none() {
+            let mut finder = LargeFileFinder::new(100);
+            finder.process_tree(&self.root);
+            self.large_files = Some(finder.get_files());
+        }
+    }
+
+    /// Detect system caches (lazy)
+    pub fn detect_system_caches(&mut self) {
+        if self.system_caches.is_none() {
+            self.system_caches = CacheDetector::new().map(|d| d.detect_all());
+        }
+    }
+
+    /// Get junk entries from current view
+    pub fn collect_junk_entries(&self) -> Vec<&Entry> {
+        self.root.collect_junk()
+    }
+
+    /// Show junk analysis view
+    pub fn show_junk_analysis(&mut self) {
+        self.compute_junk_stats();
+        self.analysis_scroll = 0;
+        self.analysis_selected = 0;
+        self.state = AppState::JunkAnalysis;
+    }
+
+    /// Show duplicates view
+    pub fn show_duplicates(&mut self) {
+        self.compute_duplicates();
+        self.analysis_scroll = 0;
+        self.analysis_selected = 0;
+        self.state = AppState::DuplicateAnalysis;
+    }
+
+    /// Show file types view
+    pub fn show_file_types(&mut self) {
+        self.compute_file_types();
+        self.analysis_scroll = 0;
+        self.analysis_selected = 0;
+        self.state = AppState::FileTypeAnalysis;
+    }
+
+    /// Show age analysis view
+    pub fn show_old_files(&mut self) {
+        self.compute_age_analysis();
+        self.analysis_scroll = 0;
+        self.analysis_selected = 0;
+        self.state = AppState::AgeAnalysis;
+    }
+
+    /// Show large files view
+    pub fn show_large_files(&mut self) {
+        self.compute_large_files();
+        self.analysis_scroll = 0;
+        self.analysis_selected = 0;
+        self.state = AppState::LargeFilesView;
+    }
+
+    /// Show system caches view
+    pub fn show_caches(&mut self) {
+        self.detect_system_caches();
+        self.analysis_scroll = 0;
+        self.analysis_selected = 0;
+        self.state = AppState::CacheView;
+    }
+
+    /// Clear all cached analysis results (call after scan or refresh)
+    pub fn invalidate_analysis(&mut self) {
+        self.junk_stats = None;
+        self.duplicate_result = None;
+        self.file_type_analysis = None;
+        self.age_analysis = None;
+        self.large_files = None;
+        // Don't invalidate system_caches as they're system-wide
     }
 }

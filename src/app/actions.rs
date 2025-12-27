@@ -360,4 +360,40 @@ impl App {
         // Move down after marking
         self.move_down();
     }
+
+    // ==========================================
+    // ANALYSIS NAVIGATION
+    // ==========================================
+
+    pub fn analysis_scroll_up(&mut self) {
+        if self.analysis_selected > 0 {
+            self.analysis_selected -= 1;
+        }
+    }
+
+    pub fn analysis_scroll_down(&mut self, max_items: usize) {
+        if self.analysis_selected < max_items.saturating_sub(1) {
+            self.analysis_selected += 1;
+        }
+    }
+
+    pub fn analysis_page_up(&mut self) {
+        self.analysis_selected = self.analysis_selected.saturating_sub(10);
+    }
+
+    pub fn analysis_page_down(&mut self, max_items: usize) {
+        self.analysis_selected = (self.analysis_selected + 10).min(max_items.saturating_sub(1));
+    }
+
+    pub fn analysis_go_to_top(&mut self) {
+        self.analysis_selected = 0;
+    }
+
+    pub fn analysis_go_to_bottom(&mut self, max_items: usize) {
+        self.analysis_selected = max_items.saturating_sub(1);
+    }
+
+    pub fn close_analysis(&mut self) {
+        self.state = AppState::Browsing;
+    }
 }

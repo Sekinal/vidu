@@ -33,6 +33,17 @@ pub enum Action {
     StartSearch,
     ShowHelp,
 
+    // Cleaning utility views
+    ShowJunkAnalysis,
+    ShowDuplicates,
+    ShowFileTypes,
+    ShowOldFiles,
+    ShowLargeFiles,
+    ShowCaches,
+    CleanSelected,
+    CleanAllJunk,
+    ToggleDeletionMode,
+
     // No action
     None,
 }
@@ -92,6 +103,19 @@ impl KeyBindings {
 
             // Go to root
             KeyCode::Char('~') => Action::GoToRoot,
+
+            // Cleaning utility views (Shift keys for major views)
+            KeyCode::Char('J') => Action::ShowJunkAnalysis,
+            KeyCode::Char('u') => Action::ShowDuplicates,
+            KeyCode::Char('T') => Action::ShowFileTypes,
+            KeyCode::Char('o') => Action::ShowOldFiles,
+            KeyCode::Char('L') => Action::ShowLargeFiles,
+            KeyCode::Char('K') => Action::ShowCaches,
+
+            // Cleaning actions
+            KeyCode::Char('c') => Action::CleanSelected,
+            KeyCode::Char('C') => Action::CleanAllJunk,
+            KeyCode::Char('!') => Action::ToggleDeletionMode,
 
             _ => Action::None,
         }
@@ -180,4 +204,43 @@ pub enum SearchAction {
     AddChar(char),
     Backspace,
     None,
+}
+
+/// Actions for analysis views (junk, duplicates, etc.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnalysisAction {
+    Close,
+    ScrollUp,
+    ScrollDown,
+    PageUp,
+    PageDown,
+    GoToTop,
+    GoToBottom,
+    Select,
+    ToggleMark,
+    CleanSelected,
+    CleanAll,
+    ToggleDeletionMode,
+    None,
+}
+
+impl KeyBindings {
+    /// Map a key press in analysis view mode
+    pub fn analysis_action(code: KeyCode) -> AnalysisAction {
+        match code {
+            KeyCode::Esc | KeyCode::Char('q') => AnalysisAction::Close,
+            KeyCode::Char('j') | KeyCode::Down => AnalysisAction::ScrollDown,
+            KeyCode::Char('k') | KeyCode::Up => AnalysisAction::ScrollUp,
+            KeyCode::PageDown => AnalysisAction::PageDown,
+            KeyCode::PageUp => AnalysisAction::PageUp,
+            KeyCode::Home | KeyCode::Char('g') => AnalysisAction::GoToTop,
+            KeyCode::End | KeyCode::Char('G') => AnalysisAction::GoToBottom,
+            KeyCode::Enter => AnalysisAction::Select,
+            KeyCode::Char(' ') => AnalysisAction::ToggleMark,
+            KeyCode::Char('c') => AnalysisAction::CleanSelected,
+            KeyCode::Char('C') => AnalysisAction::CleanAll,
+            KeyCode::Char('!') => AnalysisAction::ToggleDeletionMode,
+            _ => AnalysisAction::None,
+        }
+    }
 }

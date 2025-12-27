@@ -46,11 +46,25 @@ pub fn render_footer(f: &mut Frame, app: &App, area: Rect) {
             ("?", "help"),
             ("q", "quit"),
         ],
-        AppState::DeleteConfirm => &[("y", "confirm"), ("n", "cancel")],
+        AppState::DeleteConfirm | AppState::CleaningConfirm => {
+            &[("y", "confirm"), ("n", "cancel")]
+        }
         AppState::Preview => &[("↑↓", "scroll"), ("p/Esc", "close")],
         AppState::Help => &[("Esc", "close")],
         AppState::Search => &[("↵", "search"), ("Esc", "cancel")],
         AppState::Scanning => &[],
+        // Analysis views
+        AppState::JunkAnalysis
+        | AppState::DuplicateAnalysis
+        | AppState::FileTypeAnalysis
+        | AppState::AgeAnalysis
+        | AppState::LargeFilesView
+        | AppState::CacheView => &[
+            ("↑↓", "nav"),
+            ("!", "mode"),
+            ("c", "clean"),
+            ("q", "close"),
+        ],
     };
     
     for (key, desc) in keys {
