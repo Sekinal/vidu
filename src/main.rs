@@ -47,9 +47,9 @@ struct Args {
     #[arg(short, long)]
     fresh: bool,
 
-    /// Show hidden files
-    #[arg(short = 'H', long)]
-    hidden: bool,
+    /// Hide hidden files (show all files by default)
+    #[arg(long)]
+    no_hidden: bool,
 }
 
 fn main() -> ExitCode {
@@ -84,7 +84,8 @@ fn run() -> Result<()> {
     setup_panic_hook();
 
     // Run the application with terminal setup/teardown
-    run_with_terminal(path, args.fresh, args.hidden)
+    // show_hidden = true by default, --no-hidden to hide
+    run_with_terminal(path, args.fresh, !args.no_hidden)
 }
 
 fn setup_panic_hook() {

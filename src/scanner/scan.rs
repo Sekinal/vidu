@@ -60,7 +60,7 @@ pub struct ScanOptions {
 impl Default for ScanOptions {
     fn default() -> Self {
         Self {
-            show_hidden: false,
+            show_hidden: true,  // Show all files by default for accurate disk analysis
             max_depth: None,
             follow_symlinks: false,
             skip_virtual: true,

@@ -54,7 +54,7 @@ impl Default for Config {
         Self {
             path: PathBuf::from("."),
             force_fresh: false,
-            show_hidden: false,
+            show_hidden: true,  // Show all files by default for disk analysis
             sort_mode: SortMode::Size,
             sort_order: SortOrder::Descending,
             cache: CacheConfig::default(),
