@@ -1,12 +1,15 @@
 //! Popup dialogs (delete confirmation, etc.)
 
 use crate::app::App;
-use crate::ui::theme::{styles, Theme};
+use crate::ui::symbols::symbols;
+use crate::ui::theme::{styles, theme};
 use crate::utils::{centered_rect, format_bytes};
 use ratatui::{prelude::*, widgets::*};
 
 /// Render delete confirmation popup
 pub fn render_delete_popup(f: &mut Frame, app: &App) {
+    let t = theme();
+    let syms = symbols();
     let area = centered_rect(60, 40, f.area());
 
     // Clear background
@@ -16,13 +19,13 @@ pub fn render_delete_popup(f: &mut Frame, app: &App) {
     let Some(item) = app.selected_item() else {
         return;
     };
-    
+
     let item_type = if item.is_dir { "directory" } else { "file" };
     let warnings = if item.is_dir && item.file_count > 0 {
         vec![
             Line::from(""),
             Line::from(vec![Span::styled(
-                format!("⚠ This will delete {} files!", item.file_count),
+                format!("{} This will delete {} files!", syms.warning, item.file_count),
                 styles::danger(),
             )]),
         ]
@@ -56,7 +59,7 @@ pub fn render_delete_popup(f: &mut Frame, app: &App) {
     text.extend(vec![
         Line::from(""),
         Line::from(vec![Span::styled(
-            "⚠ This action cannot be undone!",
+            format!("{} This action cannot be undone!", syms.warning),
             styles::warning(),
         )]),
         Line::from(""),
@@ -68,23 +71,25 @@ pub fn render_delete_popup(f: &mut Frame, app: &App) {
             Span::raw(" to cancel"),
         ]),
     ]);
-    
+
     let popup = Paragraph::new(text)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Theme::RED))
-                .title(" ⚠ DELETE CONFIRMATION ")
+                .border_style(Style::default().fg(t.danger))
+                .title(format!(" {} DELETE CONFIRMATION ", syms.warning))
                 .title_style(styles::danger()),
         )
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true });
-    
+
     f.render_widget(popup, area);
 }
 
 /// Render cleaning confirmation popup
 pub fn render_cleaning_popup(f: &mut Frame, app: &App) {
+    let t = theme();
+    let syms = symbols();
     let area = centered_rect(70, 50, f.area());
 
     f.render_widget(Clear, area);
@@ -131,12 +136,12 @@ pub fn render_cleaning_popup(f: &mut Frame, app: &App) {
     // Warning based on mode
     if app.deletion_mode == crate::config::DeletionMode::Permanent {
         text.push(Line::from(vec![Span::styled(
-            "  ⚠ PERMANENT DELETE - Cannot be undone!",
+            format!("  {} PERMANENT DELETE - Cannot be undone!", syms.warning),
             styles::danger(),
         )]));
     } else {
         text.push(Line::from(vec![Span::styled(
-            "  Items will be moved to system trash",
+            format!("  {} Items will be moved to system trash", syms.trash),
             styles::dim(),
         )]));
     }
@@ -153,8 +158,8 @@ pub fn render_cleaning_popup(f: &mut Frame, app: &App) {
     ]);
 
     let title = match app.deletion_mode {
-        crate::config::DeletionMode::Trash => " 🗑 CLEAN CONFIRMATION ",
-        crate::config::DeletionMode::Permanent => " ⚠ PERMANENT DELETE CONFIRMATION ",
+        crate::config::DeletionMode::Trash => format!(" {} CLEAN CONFIRMATION ", syms.trash),
+        crate::config::DeletionMode::Permanent => format!(" {} PERMANENT DELETE CONFIRMATION ", syms.warning),
     };
 
     let popup = Paragraph::new(text)
@@ -172,16 +177,17 @@ pub fn render_cleaning_popup(f: &mut Frame, app: &App) {
 
 /// Render search input popup
 pub fn render_search_popup(f: &mut Frame, app: &App) {
+    let t = theme();
     let area = centered_rect(50, 15, f.area());
-    
+
     f.render_widget(Clear, area);
-    
+
     let text = vec![
         Line::from(""),
         Line::from(vec![
             Span::styled(" Search: ", styles::accent()),
-            Span::styled(&app.search_query, Style::default().fg(Theme::FG)),
-            Span::styled("▎", Style::default().fg(Theme::ACCENT)), // Cursor
+            Span::styled(&app.search_query, Style::default().fg(t.fg)),
+            Span::styled("▎", Style::default().fg(t.accent)), // Cursor
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -189,16 +195,16 @@ pub fn render_search_popup(f: &mut Frame, app: &App) {
             styles::dim(),
         )]),
     ];
-    
+
     let popup = Paragraph::new(text)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(styles::accent())
-                .title(" 🔍 Search ")
+                .title(" Search ")
                 .title_style(styles::accent()),
         )
         .alignment(Alignment::Center);
-    
+
     f.render_widget(popup, area);
 }

@@ -27,6 +27,7 @@ mod utils;
 use anyhow::{Context, Result};
 use app::App;
 use clap::Parser;
+use config::{Config, SymbolModeConfig};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
@@ -34,6 +35,8 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 use std::{io, panic, path::PathBuf, process::ExitCode};
+use ui::terminal::TerminalCapabilities;
+use ui::theme::ColorTheme;
 
 /// vidu - Blazingly fast disk usage analyzer
 #[derive(Parser, Debug)]
@@ -50,6 +53,14 @@ struct Args {
     /// Hide hidden files (show all files by default)
     #[arg(long)]
     no_hidden: bool,
+
+    /// Color theme (dracula, nord, gruvbox, catppuccin, solarized, tokyo-night, mono)
+    #[arg(short, long)]
+    theme: Option<String>,
+
+    /// Symbol mode (auto, unicode, ascii)
+    #[arg(long)]
+    symbols: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -79,6 +90,29 @@ fn run() -> Result<()> {
     if !path.is_dir() {
         anyhow::bail!("Path '{}' is not a directory", path.display());
     }
+
+    // Load config from file
+    let config = Config::load();
+
+    // Detect terminal capabilities
+    let caps = TerminalCapabilities::detect();
+
+    // Determine theme (CLI > config > default)
+    let theme_name = args.theme.as_deref().unwrap_or(&config.ui.theme);
+    let theme = ColorTheme::by_name(theme_name).unwrap_or_default();
+    ui::theme::init(theme);
+
+    // Determine symbol mode (CLI > config > auto-detect)
+    let symbol_mode = match args.symbols.as_deref() {
+        Some("unicode") => ui::terminal::SymbolMode::Unicode,
+        Some("ascii") => ui::terminal::SymbolMode::Ascii,
+        Some(_) | None => match config.ui.symbols {
+            SymbolModeConfig::Unicode => ui::terminal::SymbolMode::Unicode,
+            SymbolModeConfig::Ascii => ui::terminal::SymbolMode::Ascii,
+            SymbolModeConfig::Auto => caps.symbol_mode(),
+        },
+    };
+    ui::symbols::init(symbol_mode);
 
     // Setup panic hook to restore terminal on panic
     setup_panic_hook();

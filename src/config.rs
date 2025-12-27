@@ -134,6 +134,12 @@ impl Config {
             if let Some(v) = ui.show_times {
                 self.ui.show_times = v;
             }
+            if let Some(v) = ui.theme {
+                self.ui.theme = v;
+            }
+            if let Some(v) = ui.symbols {
+                self.ui.symbols = v;
+            }
         }
 
         if let Some(junk) = file.junk_detection {
@@ -247,6 +253,8 @@ impl FileConfig {
                 show_icons: Some(config.ui.show_icons),
                 show_bars: Some(config.ui.show_bars),
                 show_times: Some(config.ui.show_times),
+                theme: Some(config.ui.theme.clone()),
+                symbols: Some(config.ui.symbols),
             }),
             junk_detection: Some(FileJunkConfig {
                 junk_directories: Some(config.junk.junk_directories.clone()),
@@ -288,6 +296,8 @@ struct FileUiConfig {
     show_icons: Option<bool>,
     show_bars: Option<bool>,
     show_times: Option<bool>,
+    theme: Option<String>,
+    symbols: Option<SymbolModeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -353,6 +363,12 @@ pub struct UiConfig {
 
     /// Show file modification times
     pub show_times: bool,
+
+    /// Color theme name (e.g., "dracula", "nord", "gruvbox")
+    pub theme: String,
+
+    /// Symbol mode: "auto", "unicode", or "ascii"
+    pub symbols: SymbolModeConfig,
 }
 
 impl Default for UiConfig {
@@ -362,6 +378,71 @@ impl Default for UiConfig {
             show_icons: true,
             show_bars: true,
             show_times: true,
+            theme: "dracula".into(),
+            symbols: SymbolModeConfig::Auto,
+        }
+    }
+}
+
+/// Symbol mode configuration
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SymbolModeConfig {
+    /// Auto-detect based on terminal capabilities
+    #[default]
+    Auto,
+    /// Force Unicode symbols (Nerd Fonts)
+    Unicode,
+    /// Force ASCII-only symbols
+    Ascii,
+}
+
+/// Keybinding configuration
+/// Allows customization of key bindings for various actions.
+#[derive(Debug, Clone, Default)]
+pub struct KeybindingsConfig {
+    /// Key for quitting (default: q)
+    pub quit: Vec<String>,
+    /// Key for moving up (default: k, Up)
+    pub move_up: Vec<String>,
+    /// Key for moving down (default: j, Down)
+    pub move_down: Vec<String>,
+    /// Key for entering directory (default: Enter, l, Right)
+    pub enter: Vec<String>,
+    /// Key for going back (default: Backspace, h, Left)
+    pub go_back: Vec<String>,
+    /// Key for deleting (default: d, Delete)
+    pub delete: Vec<String>,
+    /// Key for toggling mark (default: Space)
+    pub mark: Vec<String>,
+    /// Key for showing help (default: ?)
+    pub help: Vec<String>,
+    /// Key for refreshing (default: r)
+    pub refresh: Vec<String>,
+    /// Key for cycling sort (default: s)
+    pub sort: Vec<String>,
+    /// Key for toggling hidden files (default: .)
+    pub toggle_hidden: Vec<String>,
+    /// Key for search (default: /)
+    pub search: Vec<String>,
+}
+
+impl KeybindingsConfig {
+    /// Get default keybindings
+    pub fn defaults() -> Self {
+        Self {
+            quit: vec!["q".into()],
+            move_up: vec!["k".into(), "Up".into()],
+            move_down: vec!["j".into(), "Down".into()],
+            enter: vec!["Enter".into(), "l".into(), "Right".into()],
+            go_back: vec!["Backspace".into(), "h".into(), "Left".into()],
+            delete: vec!["d".into(), "Delete".into()],
+            mark: vec!["Space".into()],
+            help: vec!["?".into()],
+            refresh: vec!["r".into()],
+            sort: vec!["s".into()],
+            toggle_hidden: vec![".".into()],
+            search: vec!["/".into()],
         }
     }
 }

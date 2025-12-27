@@ -2,16 +2,18 @@
 
 use crate::app::{App, AppState};
 use crate::ui::components::{footer, header, help, popups, preview, table};
-use crate::ui::theme::{styles, Theme};
+use crate::ui::symbols::symbols;
+use crate::ui::theme::{styles, theme};
 use ratatui::{prelude::*, widgets::*};
 
 /// Main render function
 pub fn render(f: &mut Frame, app: &mut App) {
+    let t = theme();
     let area = f.area();
-    
+
     // Clear with background color
     f.render_widget(
-        Block::default().style(Style::default().bg(Theme::BG)),
+        Block::default().style(Style::default().bg(t.bg)),
         area,
     );
     
@@ -75,51 +77,77 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
 }
 
-/// Render scanning progress overlay
+/// Render scanning progress overlay with spinner
 fn render_scanning_overlay(f: &mut Frame, app: &App) {
-    let area = crate::utils::centered_rect(50, 25, f.area());
-    
+    let syms = symbols();
+    let area = crate::utils::centered_rect(50, 30, f.area());
+
     f.render_widget(Clear, area);
-    
+
+    // Get spinner frame based on time (using file count as proxy for animation)
+    let spinner_frame = if let Some(ref progress) = app.scan_progress {
+        progress.files() / 10 // Changes every 10 files
+    } else {
+        0
+    };
+    let spinner = syms.spinner_frame(spinner_frame);
+
     let progress_text = if let Some(ref progress) = app.scan_progress {
+        let files = progress.files();
+        let dirs = progress.dirs();
+        let bytes = progress.bytes();
+
         vec![
             Line::from(""),
-            Line::from(vec![Span::styled(" Scanning... ", styles::accent())]),
+            Line::from(vec![
+                Span::styled(format!(" {} ", spinner), styles::accent()),
+                Span::styled("Scanning...", styles::accent()),
+            ]),
             Line::from(""),
+            Line::from(vec![
+                Span::styled("  Files: ", styles::dim()),
+                Span::styled(format!("{:>8}", files), styles::size()),
+                Span::raw("   "),
+                Span::styled("Dirs: ", styles::dim()),
+                Span::styled(format!("{:>6}", dirs), styles::size()),
+            ]),
+            Line::from(vec![
+                Span::styled("  Size:  ", styles::dim()),
+                Span::styled(
+                    format!("{:>8}", crate::utils::format_bytes(bytes)),
+                    styles::size(),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![Span::styled(" Current:", styles::dim())]),
             Line::from(vec![Span::raw(format!(
-                " Files: {} | Dirs: {}",
-                progress.files(),
-                progress.dirs()
-            ))]),
-            Line::from(vec![Span::raw(format!(
-                " Bytes: {}",
-                crate::utils::format_bytes(progress.bytes())
+                "  {}",
+                crate::utils::truncate_str(&progress.current(), 40)
             ))]),
             Line::from(""),
             Line::from(vec![Span::styled(
-                " Current: ",
+                format!(" Press {} to cancel", syms.cross),
                 styles::dim(),
             )]),
-            Line::from(vec![Span::raw(crate::utils::truncate_str(
-                &progress.current(),
-                40,
-            ))]),
         ]
     } else {
         vec![
             Line::from(""),
-            Line::from(vec![Span::styled(" Scanning... ", styles::accent())]),
+            Line::from(vec![
+                Span::styled(format!(" {} ", spinner), styles::accent()),
+                Span::styled("Scanning...", styles::accent()),
+            ]),
             Line::from(""),
             Line::from(vec![Span::raw(" Please wait...")]),
         ]
     };
-    
+
     let popup = Paragraph::new(progress_text)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(styles::accent())
-                .title(" 🔄 Scanning ")
+                .title(format!(" {} Scanning ", syms.refresh))
                 .title_style(styles::accent()),
         )
         .alignment(Alignment::Center);
