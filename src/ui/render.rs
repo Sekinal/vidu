@@ -209,6 +209,8 @@ fn render_deletion_overlay(f: &mut Frame, app: &App, full_area: Rect) {
         crate::config::DeletionMode::Permanent => "Permanently deleting",
     };
 
+    let remaining = total.saturating_sub(completed);
+
     let progress_text = vec![
         Line::from(""),
         Line::from(vec![
@@ -216,22 +218,29 @@ fn render_deletion_overlay(f: &mut Frame, app: &App, full_area: Rect) {
             Span::styled(format!("{}...", mode_label), styles::accent()),
         ]),
         Line::from(""),
+        // Items remaining (prominent)
         Line::from(vec![
-            Span::styled(format!("  {} ", bar), t.bar_color(percent)),
+            Span::styled("  Items remaining: ", styles::dim()),
+            Span::styled(
+                format!("{}", remaining),
+                if remaining > 0 { styles::warning() } else { styles::success() }
+            ),
+            Span::styled(format!(" / {}", total), styles::dim()),
+        ]),
+        Line::from(""),
+        // Progress bar
+        Line::from(vec![
+            Span::styled(format!("  {} ", bar), Style::default().fg(t.bar_color(percent))),
             Span::styled(format!("{:.0}%", percent), styles::size()),
         ]),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  Progress: ", styles::dim()),
-            Span::styled(format!("{} / {} items", completed, total), styles::size()),
-        ]),
-        Line::from(vec![
-            Span::styled("  Freed:    ", styles::dim()),
+            Span::styled("  Freed: ", styles::dim()),
             Span::styled(crate::utils::format_bytes(freed), styles::success()),
         ]),
         if failed > 0 {
             Line::from(vec![
-                Span::styled("  Failed:   ", styles::dim()),
+                Span::styled("  Failed: ", styles::dim()),
                 Span::styled(format!("{}", failed), styles::danger()),
             ])
         } else {
@@ -243,6 +252,11 @@ fn render_deletion_overlay(f: &mut Frame, app: &App, full_area: Rect) {
             "  {}",
             crate::utils::truncate_str(&current, 50)
         ))]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            " Press Esc to cancel",
+            styles::dim(),
+        )]),
     ];
 
     let title = match app.deletion_mode {

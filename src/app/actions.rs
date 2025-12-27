@@ -166,54 +166,28 @@ impl App {
         };
 
         // Get item info
-        let (path, is_dir, size, file_count) = {
+        let (path, size) = {
             let view = self.current_view();
             let item = &view.children[actual_idx];
-            (item.path.clone(), item.is_dir, item.size, item.file_count)
+            (item.path.clone(), item.size)
         };
 
-        // Perform deletion
-        let result = if is_dir {
-            std::fs::remove_dir_all(&path)
-        } else {
-            std::fs::remove_file(&path)
-        };
+        // Use the same deletion progress system as batch cleaning
+        self.pending_clean_paths = vec![path];
+        self.pending_clean_size = size;
 
-        match result {
-            Ok(()) => {
-                {
-                    let current = self.current_view_mut();
-                    current.children.remove(actual_idx);
-                    current.size = current.size.saturating_sub(size);
-                    current.file_count = current.file_count.saturating_sub(file_count);
-                }
+        // Initialize deletion progress
+        self.deletion_progress = Some(super::state::DeletionProgress {
+            total_items: 1,
+            completed_items: 0,
+            total_bytes: size,
+            freed_bytes: 0,
+            current_path: String::new(),
+            failed_items: 0,
+        });
 
-                // Update disk available space (approximate)
-                self.disk_available = self.disk_available.saturating_add(size);
-
-                // Adjust selection to visible items
-                let new_visible_len = self.visible_children_count();
-                if visible_idx >= new_visible_len && new_visible_len > 0 {
-                    self.table_state.select(Some(new_visible_len - 1));
-                } else if new_visible_len == 0 {
-                    self.table_state.select(None);
-                }
-
-                // Save cache
-                self.save_to_cache();
-
-                self.status_msg = format!(
-                    "Deleted: {} ({})",
-                    path.file_name().unwrap_or_default().to_string_lossy(),
-                    format_bytes(size)
-                );
-            }
-            Err(e) => {
-                self.error_msg = Some(format!("Delete failed: {}", e));
-            }
-        }
-
-        self.state = AppState::Browsing;
+        // Switch to deleting state
+        self.state = AppState::Deleting;
     }
 
     // ==========================================

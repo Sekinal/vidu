@@ -340,11 +340,66 @@ impl App {
 
     /// Run the deletion phase with live progress updates
     fn run_with_deleting<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
-        // Render initial state
+        use crate::cleaner::CleaningResult;
+
+        let mut result = CleaningResult::new();
+        let paths: Vec<_> = self.pending_clean_paths.clone();
+        let total = paths.len();
+
+        for (i, path) in paths.iter().enumerate() {
+            // Update progress before each deletion
+            if let Some(ref mut progress) = self.deletion_progress {
+                progress.current_path = path.display().to_string();
+                progress.completed_items = i;
+            }
+
+            // Render progress
+            terminal.draw(|f| ui::render::render(f, self))?;
+
+            // Check for cancel (non-blocking)
+            if event::poll(Duration::from_millis(1))? {
+                if let Event::Key(key) = event::read()? {
+                    if key.kind == KeyEventKind::Press
+                        && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+                    {
+                        // Cancel deletion
+                        self.deletion_progress = None;
+                        self.pending_clean_paths.clear();
+                        self.pending_clean_size = 0;
+                        self.state = AppState::Browsing;
+                        self.status_msg = format!("Cancelled after {} of {} items", i, total);
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Perform deletion
+            match crate::cleaner::delete_path(&path, self.deletion_mode) {
+                Ok(size) => {
+                    result.add_success(size);
+                    if let Some(ref mut progress) = self.deletion_progress {
+                        progress.freed_bytes += size;
+                    }
+                }
+                Err(e) => {
+                    result.add_failure(path.clone(), e.to_string());
+                    if let Some(ref mut progress) = self.deletion_progress {
+                        progress.failed_items += 1;
+                    }
+                }
+            }
+        }
+
+        // Mark complete
+        if let Some(ref mut progress) = self.deletion_progress {
+            progress.completed_items = total;
+        }
+
+        // Final render
         terminal.draw(|f| ui::render::render(f, self))?;
 
-        // Perform deletion with progress updates
-        let result = self.perform_deletion();
+        // Small delay to show completion
+        std::thread::sleep(Duration::from_millis(200));
 
         // Finish up
         self.finish_deletion(result);
