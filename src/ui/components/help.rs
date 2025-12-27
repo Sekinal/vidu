@@ -28,6 +28,16 @@ pub fn render_help(f: &mut Frame, _app: &App) {
             ("R", "Full rescan from root"),
             ("p", "Preview file contents"),
         ]),
+        ("Cleaning", vec![
+            ("J", "Show junk analysis"),
+            ("u", "Show duplicate files"),
+            ("T", "Show file type breakdown"),
+            ("o", "Show old/unused files"),
+            ("L", "Show large files"),
+            ("K", "Show system caches"),
+            ("c", "Clean selected items"),
+            ("!", "Toggle deletion mode (Trash/Permanent)"),
+        ]),
         ("View", vec![
             ("s", "Cycle sort mode (size/name/modified/count)"),
             ("S", "Toggle sort order (asc/desc)"),
@@ -43,7 +53,7 @@ pub fn render_help(f: &mut Frame, _app: &App) {
     let mut lines = Vec::new();
     lines.push(Line::from(""));
     lines.push(Line::from(vec![Span::styled(
-        "  vidu - Disk Usage Analyzer",
+        "  vidu - Disk Cleaning Utility",
         Style::default()
             .fg(Theme::ACCENT)
             .add_modifier(Modifier::BOLD),

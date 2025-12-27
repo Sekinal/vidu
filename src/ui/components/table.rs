@@ -21,16 +21,25 @@ pub fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
             .map(|(_idx, item)| {
                 let is_marked = marked_items.contains(&item.path);
                 let icon = get_file_icon(&item.name, item.is_dir);
-                
+
+                // Junk indicator
+                let junk_indicator = if let Some(jt) = item.junk_type {
+                    format!(" {}", jt.icon())
+                } else {
+                    String::new()
+                };
+
                 // Name with icon
                 let name_style = if is_marked {
                     styles::marked()
+                } else if item.junk_type.is_some() {
+                    styles::warning() // Highlight junk items
                 } else if item.is_dir {
                     styles::directory()
                 } else {
                     styles::file()
                 };
-                
+
                 let mark_indicator = if is_marked { "◉ " } else { "  " };
                 let error_indicator = if item.has_error() { " ⚠" } else { "" };
                 
@@ -39,8 +48,8 @@ pub fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
                 let name_display = truncate_str(&item.name, max_name_width.saturating_sub(6));
                 
                 let name_cell = Cell::from(format!(
-                    "{}{}  {}{}",
-                    mark_indicator, icon, name_display, error_indicator
+                    "{}{}  {}{}{}",
+                    mark_indicator, icon, name_display, junk_indicator, error_indicator
                 ))
                 .style(name_style);
                 
