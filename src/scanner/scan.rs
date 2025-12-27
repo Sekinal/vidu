@@ -3,39 +3,30 @@
 use super::{Entry, ScanProgress};
 use crate::constants::scanner::{MIN_ENTRIES_FOR_PARALLEL, PARALLEL_SCAN_DEPTH, PROGRESS_UPDATE_DEPTH};
 use rayon::prelude::*;
+use std::path::Path;
 use std::{fs, path::PathBuf, sync::Arc};
 
 /// Virtual/pseudo filesystems that should be skipped
 /// These don't represent real disk usage
 const VIRTUAL_FILESYSTEMS: &[&str] = &[
-    "/proc",
-    "/sys",
-    "/dev",
-    "/run",
-    "/snap",
-];
-
-/// Specific paths that report fake sizes
-const SKIP_PATHS: &[&str] = &[
-    "/proc/kcore",      // Reports ~128TB (kernel virtual memory)
-    "/sys/kernel",
+    "proc",
+    "sys",
+    "dev",
+    "run",
+    "snap",
 ];
 
 /// Check if a path is a virtual filesystem that should be skipped
-fn is_virtual_filesystem(path: &PathBuf) -> bool {
-    let path_str = path.to_string_lossy();
+fn is_virtual_filesystem(path: &Path) -> bool {
+    // Get the first component after root
+    let mut components = path.components();
 
-    // Check exact virtual filesystem roots
-    for vfs in VIRTUAL_FILESYSTEMS {
-        if path_str == *vfs || path_str.starts_with(&format!("{}/", vfs)) {
-            return true;
-        }
-    }
-
-    // Check specific skip paths
-    for skip in SKIP_PATHS {
-        if path_str == *skip {
-            return true;
+    // Skip the root component
+    if let Some(std::path::Component::RootDir) = components.next() {
+        // Check the next component
+        if let Some(comp) = components.next() {
+            let name = comp.as_os_str().to_string_lossy();
+            return VIRTUAL_FILESYSTEMS.contains(&name.as_ref());
         }
     }
 
